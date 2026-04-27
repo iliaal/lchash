@@ -28,3 +28,8 @@ extra_build_variants:
 # the extension does manual malloc/free in two backends (glibc hsearch_r and
 # the in-tree fallback), and a leak slipped into the 0.9.1 release.
 asan_test: true
+
+# Windows binaries ship via .github/workflows/release-windows.yml on every
+# GitHub Release: PHP 8.3/8.4/8.5 x x64/x86 x NTS/TS via php-windows-builder.
+# Windows uses the in-tree fallback backend (no <search.h> hsearch_r).
+windows_ci: true

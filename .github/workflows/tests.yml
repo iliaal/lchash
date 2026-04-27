@@ -76,3 +76,40 @@ jobs:
           export TEST_PHP_EXECUTABLE=/tmp/php-zts/bin/php
           export TEST_PHP_ARGS="-d extension=$(pwd)/modules/lchash.so"
           /tmp/php-zts/bin/php run-tests.php --show-diff -g FAIL,BORK,LEAK,XLEAK tests/
+
+  # Windows extension builds need the official PHP SDK + matching MSVC
+  # toolset, not the autotools phpize/configure flow. The php-org
+  # composite action below bundles SDK download, VS detection,
+  # phpize / configure / nmake invocation, and a .dll smoke load.
+  #
+  # On Windows the in-tree fallback is the active backend (no glibc,
+  # no <search.h> hsearch_r). run-tests is enabled so the suite runs
+  # against that path.
+  windows-matrix:
+    name: Resolve Windows matrix
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v6
+      - id: matrix
+        uses: php/php-windows-builder/extension-matrix@v1
+        with:
+          php-version-list: '8.4'
+
+  windows:
+    name: Windows ${{ matrix.php-version }} ${{ matrix.ts }} ${{ matrix.arch }}
+    needs: windows-matrix
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.windows-matrix.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Build extension
+        uses: php/php-windows-builder/extension@v1
+        with:
+          php-version: ${{ matrix.php-version }}
+          arch: ${{ matrix.arch }}
+          ts: ${{ matrix.ts }}
+          run-tests: 'true'
