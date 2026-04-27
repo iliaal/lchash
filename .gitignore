@@ -1,0 +1,47 @@
+# local AI tooling: per-developer scaffolding, not checked in
+/.claude/
+/AGENTS.md
+/CLAUDE.md
+
+# phpize/configure/make output
+.deps
+.libs/
+*.la
+*.lo
+*.dep
+*.loT
+*.o
+*.a
+*.so
+*~
+acinclude.m4
+aclocal.m4
+autom4te.cache/
+build/
+config.cache
+config.guess
+config.h
+config.h.in
+config.h.in~
+config.log
+config.nice
+config.status
+config.sub
+configure
+configure.ac
+configure~
+include/
+install-sh
+libtool
+ltmain.sh
+Makefile
+Makefile.fragments
+Makefile.global
+Makefile.objects
+missing
+mkinstalldirs
+modules/
+run-tests.php
+
+# PECL release tarballs (built by /release-ext or `pecl package`)
+/*.tgz

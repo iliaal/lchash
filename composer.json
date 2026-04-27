@@ -1,0 +1,29 @@
+{
+    "name": "iliaal/lchash",
+    "type": "php-ext",
+    "description": "Linear-probing hash table extension for PHP. Wraps glibc hsearch_r where available, falls back to a small in-tree implementation everywhere else.",
+    "keywords": ["hash", "hashtable", "lchash", "php-extension", "pie", "pecl"],
+    "license": "PHP-3.01",
+    "homepage": "https://github.com/iliaal/lchash",
+    "authors": [
+        {
+            "name": "Ilia Alshanetsky",
+            "email": "ilia@ilia.ws"
+        }
+    ],
+    "require": {
+        "php": ">=7.4"
+    },
+    "php-ext": {
+        "extension-name": "lchash",
+        "configure-options": [
+            {
+                "name": "enable-lchash",
+                "description": "Enable lchash support",
+                "needs-value": false
+            }
+        ],
+        "support-zts": true,
+        "support-nts": true
+    }
+}

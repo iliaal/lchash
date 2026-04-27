@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<package packagerversion="1.10.13" version="2.1"
+  xmlns="http://pear.php.net/dtd/package-2.1"
+  xmlns:tasks="http://pear.php.net/dtd/tasks-1.0"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://pear.php.net/dtd/tasks-1.0
+                      http://pear.php.net/dtd/tasks-1.0.xsd
+                      http://pear.php.net/dtd/package-2.1
+                      http://pear.php.net/dtd/package-2.1.xsd">
+ <name>lchash</name>
+ <channel>pecl.php.net</channel>
+ <summary>Linear-probing hash table interface</summary>
+ <description>
+Wraps glibc hsearch_r where available, otherwise falls back to a small
+in-tree open-addressing implementation. Provides four procedural functions
+for a single per-request string-keyed hash table:
+lchash_create(), lchash_destroy(), lchash_insert(), lchash_find().
+ </description>
+ <lead>
+  <name>Ilia Alshanetsky</name>
+  <user>iliaa</user>
+  <email>ilia@ilia.ws</email>
+  <active>yes</active>
+ </lead>
+ <date>1970-01-01</date>
+ <time>00:00:00</time>
+ <version>
+  <release>1.0.0</release>
+  <api>1.0.0</api>
+ </version>
+ <stability>
+  <release>stable</release>
+  <api>stable</api>
+ </stability>
+ <license uri="https://www.php.net/license/3_01.txt">PHP-3.01</license>
+ <notes>
+Modernization release. Targets PHP 7.4 through 8.5, NTS and ZTS.
+Adds an in-tree fallback so the extension builds on musl, macOS, *BSD,
+and Windows in addition to glibc Linux.
+ </notes>
+ <contents>
+  <dir name="/">
+   <file role="src" name="config.m4"/>
+   <file role="src" name="config.w32"/>
+   <file role="src" name="lchash.c"/>
+   <file role="src" name="lchash.stub.php"/>
+   <file role="src" name="lchash_arginfo.h"/>
+   <file role="src" name="lchash_legacy_arginfo.h"/>
+   <file role="src" name="php_lchash.h"/>
+   <file role="doc" name="CHANGELOG.md"/>
+   <file role="doc" name="CREDITS"/>
+   <file role="doc" name="EXPERIMENTAL"/>
+   <file role="doc" name="LICENSE"/>
+   <file role="doc" name="README.md"/>
+   <file role="test" name="tests/001-load.phpt"/>
+   <file role="test" name="tests/010-create-find.phpt"/>
+   <file role="test" name="tests/011-not-found.phpt"/>
+   <file role="test" name="tests/012-destroy-recreate.phpt"/>
+   <file role="test" name="tests/020-double-create.phpt"/>
+   <file role="test" name="tests/021-empty-key.phpt"/>
+   <file role="test" name="tests/022-uninit.phpt"/>
+   <file role="test" name="tests/030-fallback-stress.phpt"/>
+  </dir>
+ </contents>
+ <dependencies>
+  <required>
+   <php>
+    <min>7.4.0</min>
+   </php>
+   <pearinstaller>
+    <min>1.10.0</min>
+   </pearinstaller>
+  </required>
+ </dependencies>
+ <providesextension>lchash</providesextension>
+ <extsrcrelease>
+  <configureoption name="enable-lchash" default="no" prompt="Enable lchash support?"/>
+ </extsrcrelease>
+</package>

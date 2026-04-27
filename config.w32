@@ -1,0 +1,9 @@
+// vim:ft=javascript
+
+ARG_ENABLE("lchash", "enable lchash support", "no");
+
+if (PHP_LCHASH != "no") {
+	// Windows has no <search.h> hsearch_r. The in-tree fallback is used.
+	EXTENSION("lchash", "lchash.c");
+	AC_DEFINE("HAVE_LCHASH", 1, "Have lchash support");
+}
