@@ -31,9 +31,13 @@
 
 #include <errno.h>
 #include <string.h>
-#include <stdlib.h>
 
 ZEND_DECLARE_MODULE_GLOBALS(lchash)
+
+/* All per-entry storage uses Zend's emalloc family (request-scoped). The
+ * bucket array inside glibc's struct hsearch_data is libc-malloc'd by
+ * hcreate_r itself and cannot be redirected; that's the only libc
+ * allocation in this extension. */
 
 /* Stored payload layout, identical between glibc and fallback paths:
  *   [size_t length][length bytes][\0]
@@ -46,10 +50,7 @@ typedef struct _lchash_payload {
 
 static inline lchash_payload *lchash_payload_new(const char *src, size_t len)
 {
-	lchash_payload *p = (lchash_payload *) malloc(sizeof(size_t) + len + 1);
-	if (!p) {
-		return NULL;
-	}
+	lchash_payload *p = (lchash_payload *) emalloc(sizeof(size_t) + len + 1);
 	p->len = len;
 	if (len) {
 		memcpy(p->data, src, len);
@@ -96,11 +97,7 @@ static int lchash_fb_create(lchash_table *t, size_t n_entries)
 		errno = ENOMEM;
 		return 0;
 	}
-	t->slots = (lchash_slot *) calloc(cap, sizeof(lchash_slot));
-	if (!t->slots) {
-		errno = ENOMEM;
-		return 0;
-	}
+	t->slots = (lchash_slot *) ecalloc(cap, sizeof(lchash_slot));
 	t->capacity = cap;
 	t->count = 0;
 	return 1;
@@ -138,11 +135,7 @@ static int lchash_fb_insert(lchash_table *t, const char *key, void *data)
 		 * unchanged. Match that behavior: do not overwrite. */
 		return 1;
 	}
-	s->key = strdup(key);
-	if (!s->key) {
-		errno = ENOMEM;
-		return 0;
-	}
+	s->key = estrdup(key);
 	s->data = data;
 	t->count++;
 	return 1;
@@ -164,11 +157,11 @@ static void lchash_fb_destroy(lchash_table *t)
 	}
 	for (size_t i = 0; i < t->capacity; i++) {
 		if (t->slots[i].key) {
-			free(t->slots[i].key);
-			free(t->slots[i].data);
+			efree(t->slots[i].key);
+			efree(t->slots[i].data);
 		}
 	}
-	free(t->slots);
+	efree(t->slots);
 	t->slots = NULL;
 	t->capacity = 0;
 	t->count = 0;
@@ -178,19 +171,14 @@ static void lchash_fb_destroy(lchash_table *t)
 #ifdef HAVE_HSEARCH_R
 /* hsearch_r owns the table buckets but does not free key/data on hdestroy_r.
  * We track inserted keys in a parallel array so destroy can walk and free. */
-static int lchash_track_key(char *key)
+static void lchash_track_key(char *key)
 {
 	if (LCHASH_G(key_count) == LCHASH_G(key_alloc)) {
 		size_t new_alloc = LCHASH_G(key_alloc) ? LCHASH_G(key_alloc) * 2 : 16;
-		char **grown = (char **) realloc(LCHASH_G(keys), new_alloc * sizeof(char *));
-		if (!grown) {
-			return 0;
-		}
-		LCHASH_G(keys) = grown;
+		LCHASH_G(keys) = (char **) erealloc(LCHASH_G(keys), new_alloc * sizeof(char *));
 		LCHASH_G(key_alloc) = new_alloc;
 	}
 	LCHASH_G(keys)[LCHASH_G(key_count)++] = key;
-	return 1;
 }
 
 static void lchash_glibc_destroy(void)
@@ -200,12 +188,14 @@ static void lchash_glibc_destroy(void)
 		ENTRY *found = NULL;
 		(void) hsearch_r(query, FIND, &found, &LCHASH_G(htab));
 		if (found && found->data) {
-			free(found->data);
+			efree(found->data);
 		}
-		free(LCHASH_G(keys)[i]);
+		efree(LCHASH_G(keys)[i]);
 	}
-	free(LCHASH_G(keys));
-	LCHASH_G(keys) = NULL;
+	if (LCHASH_G(keys)) {
+		efree(LCHASH_G(keys));
+		LCHASH_G(keys) = NULL;
+	}
 	LCHASH_G(key_count) = 0;
 	LCHASH_G(key_alloc) = 0;
 	hdestroy_r(&LCHASH_G(htab));
@@ -349,43 +339,29 @@ PHP_FUNCTION(lchash_insert)
 	}
 
 	lchash_payload *payload = lchash_payload_new(val, val_len);
-	if (!payload) {
-		php_error_docref(NULL, E_WARNING, "Out of memory");
-		RETURN_FALSE;
-	}
 
 #ifdef HAVE_HSEARCH_R
-	char *key_dup = strdup(key);
-	if (!key_dup) {
-		free(payload);
-		php_error_docref(NULL, E_WARNING, "Out of memory");
-		RETURN_FALSE;
-	}
+	char *key_dup = estrdup(key);
 	ENTRY in = { key_dup, payload };
 	ENTRY *out = NULL;
 	if (hsearch_r(in, ENTER, &out, &LCHASH_G(htab)) == 0) {
-		free(key_dup);
-		free(payload);
+		efree(key_dup);
+		efree(payload);
 		php_error_docref(NULL, E_WARNING, "%s (errno %d)", strerror(errno), errno);
 		RETURN_FALSE;
 	}
 	if (out->data != payload) {
 		/* Existing entry, hsearch_r returned the prior one. Match glibc
 		 * semantics: do not overwrite. Free the rejected payload + key dup. */
-		free(key_dup);
-		free(payload);
+		efree(key_dup);
+		efree(payload);
 		RETURN_TRUE;
 	}
-	if (!lchash_track_key(key_dup)) {
-		/* Tracking failed; we can't reliably free this on destroy. Best-effort:
-		 * leave the entry live, surface the warning. The leak is bounded to
-		 * this single insert. */
-		php_error_docref(NULL, E_WARNING, "Out of memory tracking key (entry kept)");
-	}
+	lchash_track_key(key_dup);
 	RETURN_TRUE;
 #else
 	if (!lchash_fb_insert(&LCHASH_G(fallback), key, payload)) {
-		free(payload);
+		efree(payload);
 		php_error_docref(NULL, E_WARNING, "%s (errno %d)", strerror(errno), errno);
 		RETURN_FALSE;
 	}
