@@ -21,13 +21,7 @@
 #include "php.h"
 #include "php_ini.h"
 #include "ext/standard/info.h"
-/* The random extension was split out of ext/standard in PHP 8.2; older
- * versions (7.x, 8.0, 8.1) keep the header at ext/standard/php_random.h. */
-#if PHP_VERSION_ID >= 80200
-# include "ext/random/php_random.h"
-#else
-# include "ext/standard/php_random.h"
-#endif
+#include "zend_exceptions.h"
 #include "php_lchash.h"
 
 #if PHP_VERSION_ID >= 80000
@@ -38,179 +32,326 @@
 
 #include <errno.h>
 #include <string.h>
-#include <time.h>
-#ifndef PHP_WIN32
-# include <unistd.h>
+
+/* RETURN_THROWS arrived in PHP 8.0; before that, throwing an Error from
+ * a userland function just falls through without a special macro. */
+#if PHP_VERSION_ID < 80000
+# define RETURN_THROWS() return
 #endif
 
-/* Hard ceiling on n_entries. Keeps a single hostile lchash_create() call
- * from issuing an 8 GiB allocation that fatals the worker via memory_limit.
- * 1<<20 entries pre-allocates ~16 MiB for the tracking array on the glibc
- * path, which is the largest single allocation at the cap. */
+/* Wire klib's allocator hooks to Zend MM. The bucket array, the
+ * khash_t struct itself, and any rehashes go through the request-scoped
+ * allocator and so participate in Zend's leak detector on debug builds. */
+#define kmalloc(Z)     emalloc(Z)
+#define kcalloc(N, Z)  ecalloc((N), (Z))
+#define krealloc(P, Z) erealloc((P), (Z))
+#define kfree(P)       efree(P)
+
+#include "khash.h"
+
+/* zend_string *-keyed khash flavor. Used by both the procedural API
+ * (one global table) and the OO API (per-instance tables). Reuses the
+ * engine's cached DJBX33A hash and zend_string_equals (length + memcmp),
+ * so per-entry keys are refcount bumps on the caller's string and keys
+ * are binary-safe (NUL bytes preserved, length-aware comparison). */
+#define lchash_zs_hash_func(s) ((khint_t) zend_string_hash_val(s))
+#define lchash_zs_eq_func(a, b) zend_string_equals((a), (b))
+
+KHASH_INIT(lchashz, zend_string *, zend_string *, 1,
+           lchash_zs_hash_func, lchash_zs_eq_func)
+
+#define LCHASH_TABLE() ((khash_t(lchashz) *) LCHASH_G(table))
+
+/* Hard ceiling on n_entries. Single-call DoS guard: PHP_INT_MAX-class
+ * arguments would otherwise drag the worker through memory_limit. */
 #define LCHASH_MAX_ENTRIES (1u << 20)
 
 ZEND_DECLARE_MODULE_GLOBALS(lchash)
 
-/* All per-entry storage uses Zend's emalloc family + zend_string refcounting
- * (request-scoped). The bucket array inside glibc's struct hsearch_data is
- * libc-malloc'd by hcreate_r itself and cannot be redirected; that's the
- * only libc allocation in this extension. */
+#define LCHASH_REQUIRE_INIT() \
+	do { \
+		if (LCHASH_G(table) == NULL) { \
+			php_error_docref(NULL, E_WARNING, "Hash table was not initialized"); \
+			RETURN_FALSE; \
+		} \
+	} while (0)
 
-/* ------------------------------------------------------------------------
- * Hash seed for the in-tree fallback (DoS resistance against precomputed
- * collision attacks). Re-seeded per request from a CSPRNG so an attacker
- * who somehow recovers the seed within one request gets nothing reusable.
- * ------------------------------------------------------------------------ */
-static uint64_t lchash_make_seed(void)
+static void lchash_table_destroy(void)
 {
-	uint64_t seed = 0;
-	if (php_random_bytes(&seed, sizeof(seed), 0) == FAILURE) {
-		/* Fallback: CSPRNG unavailable (rare). Combine sources individually
-		 * weak but together unobservable from PHP userland. */
-		seed  = (uint64_t) time(NULL);
-#ifndef PHP_WIN32
-		seed ^= ((uint64_t) getpid()) << 32;
-#endif
-		seed ^= (uint64_t)(uintptr_t) &seed;
-		seed ^= (uint64_t)(uintptr_t) lchash_make_seed << 16;
-	}
-	return seed;
-}
-
-#ifndef HAVE_HSEARCH_R
-/* ------------------------------------------------------------------------
- * Portable fallback: open-addressing linear-probing string-keyed table.
- * Capacity is rounded up to the next power of two so the modulo is a mask.
- * Load factor cap of 0.5 matches glibc hcreate_r's headroom.
- * ------------------------------------------------------------------------ */
-
-static size_t lchash_next_pow2(size_t n)
-{
-	size_t p = 1;
-	while (p < n) {
-		p <<= 1;
-	}
-	return p;  /* upstream LCHASH_MAX_ENTRIES bound prevents overflow */
-}
-
-/* Seeded FNV-1a. Seed is XORed into both the basis and a final mixing
- * round so a passive observer of the table state cannot trivially
- * back-solve the seed from collision patterns. */
-static uint64_t lchash_fnv1a(const char *s, uint64_t seed)
-{
-	uint64_t h = (1469598103934665603ULL ^ seed) * 1099511628211ULL;
-	while (*s) {
-		h ^= (unsigned char) *s++;
-		h *= 1099511628211ULL;
-	}
-	h ^= (seed >> 32);
-	h *= 1099511628211ULL;
-	return h;
-}
-
-static void lchash_fb_create(lchash_table *t, size_t n_entries)
-{
-	size_t want = n_entries < 8 ? 16 : n_entries * 2;
-	size_t cap = lchash_next_pow2(want);
-	t->slots = (lchash_slot *) ecalloc(cap, sizeof(lchash_slot));
-	t->capacity = cap;
-	t->count = 0;
-}
-
-/* Returns the slot the key belongs in: the matching slot if present, or
- * the first empty slot encountered along the probe sequence (insertion
- * point). NULL only if the table is catastrophically full, which the load
- * factor cap (0.5) prevents in practice. */
-static lchash_slot *lchash_fb_lookup(lchash_table *t, const char *key, uint64_t seed)
-{
-	size_t mask = t->capacity - 1;
-	size_t i = (size_t) lchash_fnv1a(key, seed) & mask;
-	for (size_t probe = 0; probe < t->capacity; probe++) {
-		lchash_slot *s = &t->slots[(i + probe) & mask];
-		if (s->key == NULL) {
-			return s;
-		}
-		if (strcmp(s->key, key) == 0) {
-			return s;
-		}
-	}
-	return NULL;
-}
-
-static lchash_fb_result lchash_fb_insert(lchash_table *t, const char *key,
-                                         zend_string *value, uint64_t seed)
-{
-	lchash_slot *s = lchash_fb_lookup(t, key, seed);
-
-	/* Lookup BEFORE the capacity check: a duplicate insert at >0.5 load
-	 * must still report EXISTING, not FULL, to match glibc ENTER. */
-	if (s != NULL && s->key != NULL) {
-		return LCHASH_FB_EXISTING;
-	}
-	if (s == NULL || t->count * 2 >= t->capacity) {
-		return LCHASH_FB_FULL;
-	}
-	s->key = estrdup(key);
-	s->value = value;  /* refcount transferred to the table */
-	t->count++;
-	return LCHASH_FB_INSERTED;
-}
-
-static zend_string *lchash_fb_find(lchash_table *t, const char *key, uint64_t seed)
-{
-	lchash_slot *s = lchash_fb_lookup(t, key, seed);
-	if (s == NULL || s->key == NULL) {
-		return NULL;
-	}
-	return s->value;
-}
-
-static void lchash_fb_destroy(lchash_table *t)
-{
-	if (!t->slots) {
+	khash_t(lchashz) *h = LCHASH_TABLE();
+	if (!h) {
 		return;
 	}
-	for (size_t i = 0; i < t->capacity; i++) {
-		if (t->slots[i].key) {
-			efree(t->slots[i].key);
-			zend_string_release(t->slots[i].value);
+	for (khint_t k = kh_begin(h); k != kh_end(h); ++k) {
+		if (kh_exist(h, k)) {
+			zend_string_release(kh_key(h, k));
+			zend_string_release(kh_val(h, k));
 		}
 	}
-	efree(t->slots);
-	t->slots = NULL;
-	t->capacity = 0;
-	t->count = 0;
-}
-#endif  /* !HAVE_HSEARCH_R */
-
-#ifdef HAVE_HSEARCH_R
-/* hsearch_r owns the bucket array but does not free key/value on hdestroy_r.
- * We keep a parallel (key, value) array, pre-allocated to n_entries at
- * create time so destroy is a single linear walk -- no hsearch_r(FIND)
- * round-trip, no dynamic growth, and the maximum size is bounded by what
- * hsearch_r itself accepts. */
-static void lchash_track_entry(char *key, zend_string *value)
-{
-	LCHASH_G(entries)[LCHASH_G(entry_count)].key = key;
-	LCHASH_G(entries)[LCHASH_G(entry_count)].value = value;
-	LCHASH_G(entry_count)++;
+	kh_destroy(lchashz, h);
+	LCHASH_G(table) = NULL;
 }
 
-static void lchash_glibc_destroy(void)
+/* ------------------------------------------------------------------------
+ * OO class: LcHash
+ * ------------------------------------------------------------------------ */
+
+typedef struct _lchash_object {
+	khash_t(lchashz) *table;
+	uint32_t max_entries;
+	zend_object std;
+} lchash_object;
+
+static zend_class_entry *lchash_ce = NULL;
+static zend_object_handlers lchash_object_handlers;
+
+#if PHP_VERSION_ID >= 80000
+# define LCHASH_OBJ_PARAM    zend_object *object
+# define LCHASH_OBJ_INTERN() lchash_obj_from_zend(object)
+#else
+# define LCHASH_OBJ_PARAM    zval *object
+# define LCHASH_OBJ_INTERN() lchash_obj_from_zend(Z_OBJ_P(object))
+#endif
+
+static inline lchash_object *lchash_obj_from_zend(zend_object *obj)
 {
-	for (size_t i = 0; i < LCHASH_G(entry_count); i++) {
-		efree(LCHASH_G(entries)[i].key);
-		zend_string_release(LCHASH_G(entries)[i].value);
-	}
-	if (LCHASH_G(entries)) {
-		efree(LCHASH_G(entries));
-		LCHASH_G(entries) = NULL;
-	}
-	LCHASH_G(entry_count) = 0;
-	hdestroy_r(&LCHASH_G(htab));
-	memset(&LCHASH_G(htab), 0, sizeof(LCHASH_G(htab)));
+	return (lchash_object *) ((char *) obj - XtOffsetOf(lchash_object, std));
 }
-#endif  /* HAVE_HSEARCH_R */
+
+static zend_object *lchash_create_object(zend_class_entry *ce)
+{
+	lchash_object *intern = zend_object_alloc(sizeof(lchash_object), ce);
+	zend_object_std_init(&intern->std, ce);
+	object_properties_init(&intern->std, ce);
+	intern->std.handlers = &lchash_object_handlers;
+	intern->table = NULL;
+	intern->max_entries = LCHASH_MAX_ENTRIES;
+	return &intern->std;
+}
+
+static void lchash_free_object(zend_object *obj)
+{
+	lchash_object *intern = lchash_obj_from_zend(obj);
+	if (intern->table) {
+		khash_t(lchashz) *h = intern->table;
+		for (khint_t k = kh_begin(h); k != kh_end(h); ++k) {
+			if (kh_exist(h, k)) {
+				zend_string_release(kh_key(h, k));
+				zend_string_release(kh_val(h, k));
+			}
+		}
+		kh_destroy(lchashz, h);
+		intern->table = NULL;
+	}
+	zend_object_std_dtor(&intern->std);
+}
+
+/* Lazy allocator: defer the bucket-array allocation until the first
+ * write. Constructing many empty LcHash instances should not cost
+ * max_entries worth of bucket flags+keys+vals up front. */
+static inline void lchash_ensure_table(lchash_object *intern)
+{
+	if (UNEXPECTED(intern->table == NULL)) {
+		intern->table = kh_init(lchashz);
+		/* Caller's max_entries is a size hint; klib's load factor and
+		 * power-of-2 rounding are handled inside kh_resize. */
+		kh_resize(lchashz, intern->table, (khint_t) intern->max_entries);
+	}
+}
+
+static zval *lchash_read_dimension(LCHASH_OBJ_PARAM, zval *offset, int type, zval *rv)
+{
+	lchash_object *intern = LCHASH_OBJ_INTERN();
+
+	if (UNEXPECTED(offset == NULL)) {
+		zend_throw_error(NULL, "Cannot read empty offset on LcHash");
+		return &EG(uninitialized_zval);
+	}
+
+	zend_string *tmp;
+	zend_string *key = zval_get_tmp_string(offset, &tmp);
+	if (UNEXPECTED(EG(exception))) {
+		zend_tmp_string_release(tmp);
+		return &EG(uninitialized_zval);
+	}
+
+	if (UNEXPECTED(ZSTR_LEN(key) == 0)) {
+		zend_throw_error(NULL, "LcHash key must not be empty");
+		zend_tmp_string_release(tmp);
+		return &EG(uninitialized_zval);
+	}
+
+	if (intern->table != NULL) {
+		khint_t iter = kh_get(lchashz, intern->table, key);
+		if (iter != kh_end(intern->table)) {
+			ZVAL_STR_COPY(rv, kh_val(intern->table, iter));
+			zend_tmp_string_release(tmp);
+			return rv;
+		}
+	}
+	ZVAL_NULL(rv);
+	zend_tmp_string_release(tmp);
+	return rv;
+}
+
+static void lchash_write_dimension(LCHASH_OBJ_PARAM, zval *offset, zval *value)
+{
+	lchash_object *intern = LCHASH_OBJ_INTERN();
+
+	if (UNEXPECTED(offset == NULL)) {
+		zend_throw_error(NULL, "LcHash does not support append ($lc[] = ...)");
+		return;
+	}
+
+	zend_string *key_tmp;
+	zend_string *key = zval_get_tmp_string(offset, &key_tmp);
+	if (UNEXPECTED(EG(exception))) {
+		zend_tmp_string_release(key_tmp);
+		return;
+	}
+	if (UNEXPECTED(ZSTR_LEN(key) == 0)) {
+		zend_throw_error(NULL, "LcHash key must not be empty");
+		zend_tmp_string_release(key_tmp);
+		return;
+	}
+
+	zend_string *val_tmp;
+	zend_string *val_str = zval_get_tmp_string(value, &val_tmp);
+	if (UNEXPECTED(EG(exception))) {
+		zend_tmp_string_release(key_tmp);
+		zend_tmp_string_release(val_tmp);
+		return;
+	}
+
+	lchash_ensure_table(intern);
+
+	/* Single-probe insert/update: kh_put returns ret==0 if the key already
+	 * existed, ret==1 for a new bucket, ret==2 for a deleted-bucket reuse.
+	 * Pre-bumping the key's refcount lets klib retain the pointer; we drop
+	 * the bump on the existing-key branch since klib won't store it. */
+	zend_string *stored_key = zend_string_copy(key);
+	int ret;
+	khint_t iter = kh_put(lchashz, intern->table, stored_key, &ret);
+	if (UNEXPECTED(ret < 0)) {
+		zend_string_release(stored_key);
+		zend_tmp_string_release(key_tmp);
+		zend_tmp_string_release(val_tmp);
+		zend_throw_error(NULL, "kh_put failed");
+		return;
+	}
+
+	if (ret == 0) {
+		/* Existing key: replace value. Bump-then-release ordering protects
+		 * against $lc[$k] = $lc[$k] aliasing where the read result holds
+		 * the only refcount on the prior value. */
+		zend_string_release(stored_key);
+		zend_string *new_val = zend_string_copy(val_str);
+		zend_string *old_val = kh_val(intern->table, iter);
+		kh_val(intern->table, iter) = new_val;
+		zend_string_release(old_val);
+	} else {
+		/* New entry. Capacity check happens post-insert: kh_put may have
+		 * grown the bucket array; if we now exceed the user's cap, undo
+		 * the bucket placement (kh_del marks it deleted, geometry stays). */
+		if (UNEXPECTED(kh_size(intern->table) > intern->max_entries)) {
+			kh_del(lchashz, intern->table, iter);
+			zend_string_release(stored_key);
+			zend_tmp_string_release(key_tmp);
+			zend_tmp_string_release(val_tmp);
+			zend_throw_error(NULL,
+				"LcHash at capacity (%u entries)", intern->max_entries);
+			return;
+		}
+		kh_val(intern->table, iter) = zend_string_copy(val_str);
+	}
+
+	zend_tmp_string_release(key_tmp);
+	zend_tmp_string_release(val_tmp);
+}
+
+static int lchash_has_dimension(LCHASH_OBJ_PARAM, zval *offset, int check_empty)
+{
+	lchash_object *intern = LCHASH_OBJ_INTERN();
+
+	if (offset == NULL || intern->table == NULL) return 0;
+
+	zend_string *tmp;
+	zend_string *key = zval_get_tmp_string(offset, &tmp);
+	if (UNEXPECTED(EG(exception))) {
+		zend_tmp_string_release(tmp);
+		return 0;
+	}
+
+	int result = 0;
+	if (ZSTR_LEN(key) > 0) {
+		khint_t iter = kh_get(lchashz, intern->table, key);
+		if (iter != kh_end(intern->table)) {
+			result = 1;
+			if (check_empty) {
+				zend_string *v = kh_val(intern->table, iter);
+				if (ZSTR_LEN(v) == 0
+					|| (ZSTR_LEN(v) == 1 && ZSTR_VAL(v)[0] == '0')) {
+					result = 0;
+				}
+			}
+		}
+	}
+	zend_tmp_string_release(tmp);
+	return result;
+}
+
+static void lchash_unset_dimension(LCHASH_OBJ_PARAM, zval *offset)
+{
+	lchash_object *intern = LCHASH_OBJ_INTERN();
+
+	if (offset == NULL || intern->table == NULL) return;
+
+	zend_string *tmp;
+	zend_string *key = zval_get_tmp_string(offset, &tmp);
+	if (UNEXPECTED(EG(exception))) {
+		zend_tmp_string_release(tmp);
+		return;
+	}
+
+	if (ZSTR_LEN(key) > 0) {
+		khint_t iter = kh_get(lchashz, intern->table, key);
+		if (iter != kh_end(intern->table)) {
+			zend_string_release(kh_key(intern->table, iter));
+			zend_string_release(kh_val(intern->table, iter));
+			kh_del(lchashz, intern->table, iter);
+		}
+	}
+	zend_tmp_string_release(tmp);
+}
+
+PHP_METHOD(LcHash, __construct)
+{
+	zend_long n_entries = LCHASH_MAX_ENTRIES;
+
+	ZEND_PARSE_PARAMETERS_START(0, 1)
+		Z_PARAM_OPTIONAL
+		Z_PARAM_LONG(n_entries)
+	ZEND_PARSE_PARAMETERS_END();
+
+	if (n_entries <= 0) {
+		zend_throw_error(NULL, "LcHash n_entries must be positive");
+		RETURN_THROWS();
+	}
+	if (n_entries > (zend_long) LCHASH_MAX_ENTRIES) {
+		zend_throw_error(NULL,
+			"LcHash n_entries " ZEND_LONG_FMT " exceeds the cap of %u",
+			n_entries, (unsigned) LCHASH_MAX_ENTRIES);
+		RETURN_THROWS();
+	}
+
+	lchash_object *intern = lchash_obj_from_zend(Z_OBJ_P(ZEND_THIS));
+	if (UNEXPECTED(intern->table != NULL)) {
+		zend_throw_error(NULL, "LcHash is already constructed");
+		RETURN_THROWS();
+	}
+	/* Lazy allocation: don't touch the bucket array until first write. */
+	intern->max_entries = (uint32_t) n_entries;
+}
 
 /* ------------------------------------------------------------------------
  * Module lifecycle
@@ -224,6 +365,20 @@ static void php_lchash_init_globals(zend_lchash_globals *g)
 PHP_MINIT_FUNCTION(lchash)
 {
 	ZEND_INIT_MODULE_GLOBALS(lchash, php_lchash_init_globals, NULL);
+
+	lchash_ce = register_class_LcHash();
+	lchash_ce->create_object = lchash_create_object;
+
+	memcpy(&lchash_object_handlers, zend_get_std_object_handlers(),
+		sizeof(zend_object_handlers));
+	lchash_object_handlers.offset = XtOffsetOf(lchash_object, std);
+	lchash_object_handlers.free_obj = lchash_free_object;
+	lchash_object_handlers.clone_obj = NULL;
+	lchash_object_handlers.read_dimension = lchash_read_dimension;
+	lchash_object_handlers.write_dimension = lchash_write_dimension;
+	lchash_object_handlers.has_dimension = lchash_has_dimension;
+	lchash_object_handlers.unset_dimension = lchash_unset_dimension;
+
 	return SUCCESS;
 }
 
@@ -233,32 +388,16 @@ PHP_RINIT_FUNCTION(lchash)
 	ZEND_TSRMLS_CACHE_UPDATE();
 #endif
 	/* Defense-in-depth: if a prior request leaked through without
-	 * RSHUTDOWN unwinding (e.g. fatal exit before zend_deactivate),
-	 * tear down before fresh init. Zend MM auto-frees emalloc'd memory
-	 * at request end so this is rarely needed, but the libc-malloc'd
-	 * hsearch_data buckets are not Zend MM tracked. */
-	if (LCHASH_G(is_init)) {
-#ifdef HAVE_HSEARCH_R
-		lchash_glibc_destroy();
-#else
-		lchash_fb_destroy(&LCHASH_G(fallback));
-#endif
+	 * RSHUTDOWN unwinding, tear down before fresh init. */
+	if (LCHASH_G(table)) {
+		lchash_table_destroy();
 	}
-	LCHASH_G(is_init) = 0;
-	LCHASH_G(hash_seed) = lchash_make_seed();
 	return SUCCESS;
 }
 
 PHP_RSHUTDOWN_FUNCTION(lchash)
 {
-	if (LCHASH_G(is_init)) {
-#ifdef HAVE_HSEARCH_R
-		lchash_glibc_destroy();
-#else
-		lchash_fb_destroy(&LCHASH_G(fallback));
-#endif
-		LCHASH_G(is_init) = 0;
-	}
+	lchash_table_destroy();
 	return SUCCESS;
 }
 
@@ -267,44 +406,12 @@ PHP_MINFO_FUNCTION(lchash)
 	php_info_print_table_start();
 	php_info_print_table_row(2, "lchash support", "enabled");
 	php_info_print_table_row(2, "Version", PHP_LCHASH_VERSION);
-	php_info_print_table_row(2, "Backend",
-#ifdef HAVE_HSEARCH_R
-		"glibc hsearch_r"
-#else
-		"in-tree linear probing"
-#endif
-	);
+	php_info_print_table_row(2, "Backend", "klib khash");
 	php_info_print_table_end();
 }
 
 /* ------------------------------------------------------------------------
- * Userland helpers
- * ------------------------------------------------------------------------ */
-
-#define LCHASH_REQUIRE_INIT() \
-	do { \
-		if (!LCHASH_G(is_init)) { \
-			php_error_docref(NULL, E_WARNING, "Hash table was not initialized"); \
-			RETURN_FALSE; \
-		} \
-	} while (0)
-
-/* glibc's strerror is not thread-safe; under ZTS, use the GNU strerror_r
- * which writes into a caller-supplied buffer. Other libcs (musl, macOS,
- * Windows, *BSD) ship a thread-safe strerror by default. */
-static void lchash_strerror_warn(int err)
-{
-#if defined(ZTS) && defined(__GLIBC__)
-	char buf[128];
-	char *msg = strerror_r(err, buf, sizeof(buf));
-	php_error_docref(NULL, E_WARNING, "%s (errno %d)", msg, err);
-#else
-	php_error_docref(NULL, E_WARNING, "%s (errno %d)", strerror(err), err);
-#endif
-}
-
-/* ------------------------------------------------------------------------
- * Userland functions
+ * Procedural userland functions
  * ------------------------------------------------------------------------ */
 
 PHP_FUNCTION(lchash_create)
@@ -325,27 +432,15 @@ PHP_FUNCTION(lchash_create)
 			n_entries, (unsigned) LCHASH_MAX_ENTRIES);
 		RETURN_FALSE;
 	}
-
-	if (LCHASH_G(is_init)) {
+	if (LCHASH_G(table)) {
 		php_error_docref(NULL, E_WARNING, "Hash table already exists");
 		RETURN_FALSE;
 	}
 
-#ifdef HAVE_HSEARCH_R
-	memset(&LCHASH_G(htab), 0, sizeof(LCHASH_G(htab)));
-	if (hcreate_r((size_t) n_entries, &LCHASH_G(htab)) == 0) {
-		lchash_strerror_warn(errno);
-		RETURN_FALSE;
-	}
-	LCHASH_G(entries) = (lchash_entry *) ecalloc(
-		(size_t) n_entries, sizeof(lchash_entry));
-	LCHASH_G(entry_count) = 0;
-	LCHASH_G(entry_capacity) = (size_t) n_entries;
-#else
-	lchash_fb_create(&LCHASH_G(fallback), (size_t) n_entries);
-#endif
-
-	LCHASH_G(is_init) = 1;
+	khash_t(lchashz) *h = kh_init(lchashz);
+	/* Pre-size to avoid rehashes during the first n_entries inserts. */
+	kh_resize(lchashz, h, (khint_t) n_entries);
+	LCHASH_G(table) = h;
 	RETURN_TRUE;
 }
 
@@ -355,127 +450,77 @@ PHP_FUNCTION(lchash_destroy)
 
 	LCHASH_REQUIRE_INIT();
 
-#ifdef HAVE_HSEARCH_R
-	lchash_glibc_destroy();
-#else
-	lchash_fb_destroy(&LCHASH_G(fallback));
-#endif
-	LCHASH_G(is_init) = 0;
+	lchash_table_destroy();
 	RETURN_TRUE;
 }
 
 PHP_FUNCTION(lchash_insert)
 {
-	char *key, *val;
-	size_t key_len, val_len;
+	zend_string *key, *val;
 
 	ZEND_PARSE_PARAMETERS_START(2, 2)
-		Z_PARAM_STRING(key, key_len)
-		Z_PARAM_STRING(val, val_len)
+		Z_PARAM_STR(key)
+		Z_PARAM_STR(val)
 	ZEND_PARSE_PARAMETERS_END();
 
 	LCHASH_REQUIRE_INIT();
 
-	if (key_len == 0) {
+	if (ZSTR_LEN(key) == 0) {
 		php_error_docref(NULL, E_WARNING, "Key must not be empty");
 		RETURN_FALSE;
 	}
-	if (memchr(key, '\0', key_len) != NULL) {
-		php_error_docref(NULL, E_WARNING, "Key must not contain NUL bytes");
-		RETURN_FALSE;
-	}
 
-	zend_string *zstr = zend_string_init(val, val_len, 0);
+	khash_t(lchashz) *h = LCHASH_TABLE();
 
-#ifdef HAVE_HSEARCH_R
-	/* Probe FIND first so a duplicate-key insert doesn't count against the
-	 * entry_capacity cap. Only fresh inserts consume an entries[] slot. */
-	{
-		ENTRY probe = { key, NULL };
-		ENTRY *hit = NULL;
-		if (hsearch_r(probe, FIND, &hit, &LCHASH_G(htab)) != 0 && hit != NULL) {
-			zend_string_release(zstr);
-			RETURN_TRUE;
-		}
-	}
-	if (LCHASH_G(entry_count) >= LCHASH_G(entry_capacity)) {
-		/* User asked for n_entries slots; hsearch_r's internal rounding
-		 * would let us overshoot, but our entries[] tracking is sized
-		 * exactly to n_entries. Refuse here to keep them in sync. */
-		zend_string_release(zstr);
-		errno = ENOMEM;
-		lchash_strerror_warn(errno);
+	/* Single-probe insert: kh_put returns ret==0 if the key already
+	 * existed (first writer wins, matches glibc hsearch ENTER semantics),
+	 * ret==1|2 for a new bucket. Capacity check is post-insert; on
+	 * overflow we undo the bucket placement via kh_del. */
+	zend_string *stored_key = zend_string_copy(key);
+	int ret;
+	khint_t iter = kh_put(lchashz, h, stored_key, &ret);
+	if (UNEXPECTED(ret < 0)) {
+		zend_string_release(stored_key);
+		php_error_docref(NULL, E_WARNING, "kh_put failed");
 		RETURN_FALSE;
 	}
-	char *key_dup = estrdup(key);
-	ENTRY in = { key_dup, zstr };
-	ENTRY *out = NULL;
-	if (hsearch_r(in, ENTER, &out, &LCHASH_G(htab)) == 0) {
-		efree(key_dup);
-		zend_string_release(zstr);
-		lchash_strerror_warn(errno);
-		RETURN_FALSE;
-	}
-	if (out->data != zstr) {
-		/* Existing entry; matches glibc hsearch ENTER semantics
-		 * (do not overwrite). The returned entry is the prior one. */
-		efree(key_dup);
-		zend_string_release(zstr);
+	if (ret == 0) {
+		/* First writer wins: drop our refcount bump on the key,
+		 * leave the existing value untouched. */
+		zend_string_release(stored_key);
 		RETURN_TRUE;
 	}
-	/* Fresh insert: track for destroy. entries[] was sized to n_entries
-	 * at create time and hsearch_r refuses beyond that, so this slot
-	 * is guaranteed to exist. */
-	lchash_track_entry(key_dup, zstr);
-	RETURN_TRUE;
-#else
-	switch (lchash_fb_insert(&LCHASH_G(fallback), key, zstr, LCHASH_G(hash_seed))) {
-		case LCHASH_FB_INSERTED:
-			RETURN_TRUE;
-		case LCHASH_FB_EXISTING:
-			zend_string_release(zstr);
-			RETURN_TRUE;
-		case LCHASH_FB_FULL:
-		default:
-			zend_string_release(zstr);
-			errno = ENOMEM;
-			lchash_strerror_warn(errno);
-			RETURN_FALSE;
+	if (UNEXPECTED(kh_size(h) > LCHASH_MAX_ENTRIES)) {
+		kh_del(lchashz, h, iter);
+		zend_string_release(stored_key);
+		php_error_docref(NULL, E_WARNING,
+			"Hash table at capacity (%u entries)", LCHASH_MAX_ENTRIES);
+		RETURN_FALSE;
 	}
-#endif
+	kh_val(h, iter) = zend_string_copy(val);
+	RETURN_TRUE;
 }
 
 PHP_FUNCTION(lchash_find)
 {
-	char *key;
-	size_t key_len;
+	zend_string *key;
 
 	ZEND_PARSE_PARAMETERS_START(1, 1)
-		Z_PARAM_STRING(key, key_len)
+		Z_PARAM_STR(key)
 	ZEND_PARSE_PARAMETERS_END();
 
 	LCHASH_REQUIRE_INIT();
 
-	if (key_len == 0 || memchr(key, '\0', key_len) != NULL) {
+	if (ZSTR_LEN(key) == 0) {
 		RETURN_FALSE;
 	}
 
-	zend_string *zstr = NULL;
-
-#ifdef HAVE_HSEARCH_R
-	ENTRY query = { key, NULL };
-	ENTRY *found = NULL;
-	if (hsearch_r(query, FIND, &found, &LCHASH_G(htab)) != 0 && found != NULL) {
-		zstr = (zend_string *) found->data;
-	}
-#else
-	zstr = lchash_fb_find(&LCHASH_G(fallback), key, LCHASH_G(hash_seed));
-#endif
-
-	if (zstr == NULL) {
+	khash_t(lchashz) *h = LCHASH_TABLE();
+	khint_t iter = kh_get(lchashz, h, key);
+	if (iter == kh_end(h)) {
 		RETURN_FALSE;
 	}
-	RETURN_STR_COPY(zstr);
+	RETURN_STR_COPY(kh_val(h, iter));
 }
 
 /* ------------------------------------------------------------------------

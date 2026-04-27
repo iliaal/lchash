@@ -104,23 +104,68 @@ function bench_lchash(array $keys, array $values): array {
     ];
 }
 
+function bench_lchash_oo(array $keys, array $values): array {
+    $n = count($keys);
+    $rss0 = rss_kib();
+    $mem0 = memory_get_usage();
+    $t0 = microtime(true);
+    $lc = new LcHash($n);
+    for ($i = 0; $i < $n; $i++) {
+        $lc[$keys[$i]] = $values[$i];
+    }
+    $insert = microtime(true) - $t0;
+    $mem1 = memory_get_usage();
+    $rss1 = rss_kib();
+
+    $t0 = microtime(true);
+    $hits = 0;
+    for ($i = 0; $i < $n; $i++) {
+        if ($lc[$keys[$i]] !== null) $hits++;
+    }
+    $lookup = microtime(true) - $t0;
+    if ($hits !== $n) {
+        fwrite(STDERR, "lchash-oo hit mismatch: $hits / $n\n");
+    }
+
+    unset($lc);
+    return [
+        'insert_s' => $insert,
+        'lookup_s' => $lookup,
+        'zend_mb'  => ($mem1 - $mem0) / 1024 / 1024,
+        'rss_mb'   => ($rss1 - $rss0) / 1024,
+    ];
+}
+
 // Warm caches with a small unrelated allocation so the first bench
 // doesn't pay for arena setup.
 $_ = array_fill(0, 1024, 'x'); unset($_);
 
 $php = bench_php_array($keys, $values);
 $lc  = bench_lchash($keys, $values);
+$oo  = bench_lchash_oo($keys, $values);
 
-printf("\n%-12s %12s %12s %12s %12s\n",
+printf("\n%-14s %12s %12s %12s %12s\n",
     'backend', 'insert (s)', 'lookup (s)', 'Zend MM MB', 'RSS Δ MB');
-printf("%s\n", str_repeat('-', 64));
-printf("%-12s %12.3f %12.3f %12.2f %12.2f\n",
+printf("%s\n", str_repeat('-', 66));
+printf("%-14s %12.3f %12.3f %12.2f %12.2f\n",
     'PHP array', $php['insert_s'], $php['lookup_s'], $php['zend_mb'], $php['rss_mb']);
-printf("%-12s %12.3f %12.3f %12.2f %12.2f\n",
-    'lchash', $lc['insert_s'], $lc['lookup_s'], $lc['zend_mb'], $lc['rss_mb']);
-printf("%s\n", str_repeat('-', 64));
-printf("%-12s %12.2fx %11.2fx %11.2fx %11.2fx\n", 'ratio l/p',
+printf("%-14s %12.3f %12.3f %12.2f %12.2f\n",
+    'lchash (proc)', $lc['insert_s'], $lc['lookup_s'], $lc['zend_mb'], $lc['rss_mb']);
+printf("%-14s %12.3f %12.3f %12.2f %12.2f\n",
+    'lchash (OO)', $oo['insert_s'], $oo['lookup_s'], $oo['zend_mb'], $oo['rss_mb']);
+printf("%s\n", str_repeat('-', 66));
+printf("%-14s %12.2fx %11.2fx %11.2fx %11.2fx\n", 'proc / array',
     $lc['insert_s'] / $php['insert_s'],
     $lc['lookup_s'] / $php['lookup_s'],
     $php['zend_mb'] != 0 ? $lc['zend_mb'] / $php['zend_mb'] : 0,
     $php['rss_mb'] != 0 ? $lc['rss_mb'] / $php['rss_mb'] : 0);
+printf("%-14s %12.2fx %11.2fx %11.2fx %11.2fx\n", 'OO / array',
+    $oo['insert_s'] / $php['insert_s'],
+    $oo['lookup_s'] / $php['lookup_s'],
+    $php['zend_mb'] != 0 ? $oo['zend_mb'] / $php['zend_mb'] : 0,
+    $php['rss_mb'] != 0 ? $oo['rss_mb'] / $php['rss_mb'] : 0);
+printf("%-14s %12.2fx %11.2fx %11.2fx %11.2fx\n", 'OO / proc',
+    $lc['insert_s'] != 0 ? $oo['insert_s'] / $lc['insert_s'] : 0,
+    $lc['lookup_s'] != 0 ? $oo['lookup_s'] / $lc['lookup_s'] : 0,
+    $lc['zend_mb'] != 0 ? $oo['zend_mb'] / $lc['zend_mb'] : 0,
+    $lc['rss_mb'] != 0 ? $oo['rss_mb'] / $lc['rss_mb'] : 0);
