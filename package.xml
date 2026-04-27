@@ -11,10 +11,10 @@
  <channel>pecl.php.net</channel>
  <summary>Linear-probing hash table interface</summary>
  <description>
-Wraps glibc hsearch_r where available, otherwise falls back to a small
-in-tree open-addressing implementation. Provides four procedural functions
-for a single per-request string-keyed hash table:
-lchash_create(), lchash_destroy(), lchash_insert(), lchash_find().
+Per-request string-keyed hash table backed by vendored klib khash.
+Exposes four procedural functions (lchash_create, lchash_destroy,
+lchash_insert, lchash_find) and an LcHash class with $obj[$key]
+dimension access. Keys and values are binary-safe.
  </description>
  <lead>
   <name>Ilia Alshanetsky</name>
@@ -34,14 +34,19 @@ lchash_create(), lchash_destroy(), lchash_insert(), lchash_find().
  </stability>
  <license uri="https://www.php.net/license/3_01.txt">PHP-3.01</license>
  <notes>
-Modernization release. Targets PHP 7.4 through 8.5, NTS and ZTS.
-Adds an in-tree fallback so the extension builds on musl, macOS, *BSD,
-and Windows in addition to glibc Linux.
+Modernization release. Targets PHP 7.4 through 8.5, NTS and ZTS,
+on glibc Linux, musl, macOS, *BSD, and Windows.
+
+Single backend (vendored klib khash, MIT-licensed, header-only).
+Adds an LcHash class with $lc[$key] dimension access (read/write/
+isset/unset). Keys are now binary-safe in both the procedural and
+OO APIs (NUL bytes preserved, length-aware comparison).
  </notes>
  <contents>
   <dir name="/">
    <file role="src" name="config.m4"/>
    <file role="src" name="config.w32"/>
+   <file role="src" name="khash.h"/>
    <file role="src" name="lchash.c"/>
    <file role="src" name="lchash.stub.php"/>
    <file role="src" name="lchash_arginfo.h"/>
@@ -67,6 +72,7 @@ and Windows in addition to glibc Linux.
    <file role="test" name="tests/052-too-many-entries.phpt"/>
    <file role="test" name="tests/053-fill-to-capacity.phpt"/>
    <file role="test" name="tests/060-no-explicit-destroy.phpt"/>
+   <file role="test" name="tests/070-oo-binary-safe-key.phpt"/>
   </dir>
  </contents>
  <dependencies>

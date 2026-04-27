@@ -23,3 +23,15 @@ function lchash_insert(string $key, string $value): bool {}
 
 /** Look up a key. Returns the stored string, or false if not found. */
 function lchash_find(string $key): string|false {}
+
+/**
+ * Object-oriented hash table with $obj[$key] dimension access.
+ *
+ * Stores keys/values as refcounted zend_strings rather than estrdup'd
+ * copies, and uses standard PHP-array overwrite semantics on assignment
+ * (the procedural API's "first writer wins" is preserved separately).
+ */
+final class LcHash
+{
+    public function __construct(int $n_entries = 1048576) {}
+}

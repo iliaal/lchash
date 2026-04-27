@@ -19,12 +19,6 @@
 
 #define PHP_LCHASH_VERSION "1.0.0"
 
-#ifdef HAVE_HSEARCH_R
-/* _GNU_SOURCE is set globally in config.m4 for this TU, which is required for
- * glibc's <search.h> to expose hsearch_r/hcreate_r/hdestroy_r prototypes. */
-# include <search.h>
-#endif
-
 extern zend_module_entry lchash_module_entry;
 #define phpext_lchash_ptr &lchash_module_entry
 
@@ -40,37 +34,6 @@ extern zend_module_entry lchash_module_entry;
 # include "TSRM.h"
 #endif
 
-/* In-tree fallback table for non-glibc platforms (musl, macOS, *BSD,
- * Windows). Open-addressing, linear probing, FNV-1a key hash with a
- * per-request seed, power-of-two capacity, 0.5 load factor cap. */
-typedef struct _lchash_slot {
-	char *key;
-	zend_string *value;
-} lchash_slot;
-
-typedef struct _lchash_table {
-	lchash_slot *slots;
-	size_t capacity;       /* always a power of two */
-	size_t count;
-} lchash_table;
-
-typedef enum {
-	LCHASH_FB_INSERTED,    /* fresh slot taken */
-	LCHASH_FB_EXISTING,    /* key already present, no change */
-	LCHASH_FB_FULL,        /* load cap reached, new key refused */
-} lchash_fb_result;
-
-#ifdef HAVE_HSEARCH_R
-/* Parallel tracking array on the glibc path. hsearch_r does not free
- * keys/values on hdestroy_r, so we keep our own list to walk at destroy.
- * Pre-allocated to n_entries at create time -- hsearch_r refuses beyond
- * that capacity, which makes the array size statically sufficient. */
-typedef struct _lchash_entry {
-	char *key;
-	zend_string *value;
-} lchash_entry;
-#endif
-
 PHP_MINIT_FUNCTION(lchash);
 PHP_RINIT_FUNCTION(lchash);
 PHP_RSHUTDOWN_FUNCTION(lchash);
@@ -82,19 +45,7 @@ PHP_FUNCTION(lchash_insert);
 PHP_FUNCTION(lchash_find);
 
 ZEND_BEGIN_MODULE_GLOBALS(lchash)
-	zend_bool is_init;
-	uint64_t hash_seed;        /* FNV-1a seed; reseeded per request */
-#ifdef HAVE_HSEARCH_R
-	struct hsearch_data htab;
-	lchash_entry *entries;     /* pre-allocated to entry_capacity on create */
-	size_t entry_count;
-	/* glibc's hcreate_r(nel) internally rounds up (next prime >= 1.25*nel + 1)
-	 * so hsearch_r accepts more inserts than nel. Cap inserts at the user's
-	 * requested n_entries to keep entries[] sized correctly. */
-	size_t entry_capacity;
-#else
-	lchash_table fallback;
-#endif
+	void *table;     /* khash_t(lchash) *, opaque outside lchash.c */
 ZEND_END_MODULE_GLOBALS(lchash)
 
 #if defined(ZTS) && defined(COMPILE_DL_LCHASH)
