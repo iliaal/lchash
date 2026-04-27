@@ -7,8 +7,6 @@ PHP_ARG_ENABLE([lchash],
   [no])
 
 if test "$PHP_LCHASH" != "no"; then
-  AC_CHECK_HEADERS([search.h])
-
   dnl hsearch_r is a glibc extension. We detect it explicitly so the
   dnl extension can fall back to its in-tree linear-probing table on
   dnl musl, macOS, *BSD, and Windows. The _GNU_SOURCE define is required
