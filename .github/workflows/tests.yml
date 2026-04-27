@@ -81,10 +81,6 @@ jobs:
   # toolset, not the autotools phpize/configure flow. The php-org
   # composite action below bundles SDK download, VS detection,
   # phpize / configure / nmake invocation, and a .dll smoke load.
-  #
-  # On Windows the in-tree fallback is the active backend (no glibc,
-  # no <search.h> hsearch_r). run-tests is enabled so the suite runs
-  # against that path.
   windows-matrix:
     name: Resolve Windows matrix
     runs-on: ubuntu-latest
@@ -95,7 +91,7 @@ jobs:
       - id: matrix
         uses: php/php-windows-builder/extension-matrix@v1
         with:
-          php-version-list: '8.4'
+          php-version-list: '8.3,8.4,8.5'
 
   windows:
     name: Windows ${{ matrix.php-version }} ${{ matrix.ts }} ${{ matrix.arch }}
@@ -114,51 +110,10 @@ jobs:
           ts: ${{ matrix.ts }}
           run-tests: 'true'
 
-  # Forces the in-tree fallback path on a glibc Linux runner by stripping
-  # HAVE_HSEARCH_R from config.h after configure. Without this lane the
-  # fallback is only exercised on the Windows runner; this lets us catch
-  # fallback regressions across the full PHP version matrix.
-  linux-fallback:
-    name: PHP ${{ matrix.php }} - Linux NTS (in-tree fallback)
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        php: ['7.4', '8.4', '8.5']
-
-    steps:
-      - uses: actions/checkout@v6
-
-      - name: Setup PHP
-        uses: shivammathur/setup-php@v2
-        with:
-          php-version: ${{ matrix.php }}
-          tools: phpize, php-config
-          coverage: none
-
-      - name: Build extension with HAVE_HSEARCH_R disabled
-        run: |
-          phpize
-          ./configure --enable-lchash
-          sed -i 's|^#define HAVE_HSEARCH_R 1|/* #undef HAVE_HSEARCH_R */|' config.h
-          sed -i 's|^#define HAVE_HCREATE_R 1|/* #undef HAVE_HCREATE_R */|' config.h
-          sed -i 's|^#define HAVE_HDESTROY_R 1|/* #undef HAVE_HDESTROY_R */|' config.h
-          make -j$(nproc)
-          php -d extension=$(pwd)/modules/lchash.so --ri lchash | grep Backend
-
-      - name: Run test suite (fallback backend)
-        env:
-          NO_INTERACTION: 1
-        run: |
-          export TEST_PHP_EXECUTABLE=$(which php)
-          export TEST_PHP_ARGS="-d extension=$(pwd)/modules/lchash.so"
-          php run-tests.php --show-diff -g FAIL,BORK,LEAK,XLEAK tests/
-
   # AddressSanitizer + UBSan against PHP built from source with
-  # -fsanitize=address. Catches use-after-free, leaks, OOB on the manual
-  # malloc/free paths in both backends -- particularly the parallel
-  # entries[] tracking on the glibc path and the open-addressing slots
-  # on the fallback. Mirrors the php_clickhouse ASAN job, minus the
+  # -fsanitize=address. Catches use-after-free, leaks, OOB across the
+  # khash backend's allocator hooks and the OO class's per-instance
+  # table lifecycle. Mirrors the php_clickhouse ASAN job, minus the
   # service container.
   asan:
     name: PHP ${{ matrix.php }} - ASAN
