@@ -1,6 +1,6 @@
 # lchash
 
-[![Tests](https://github.com/iliaal/lchash/actions/workflows/tests.yml/badge.svg)](https://github.com/iliaal/lchash/actions/workflows/tests.yml)
+[![Tests](https://github.com/iliaal/lchash/actions/workflows/tests.yml/badge.svg?branch=main)](https://github.com/iliaal/lchash/actions/workflows/tests.yml)
 [![Version](https://img.shields.io/github/v/release/iliaal/lchash)](https://github.com/iliaal/lchash/releases)
 [![License: PHP-3.01](https://img.shields.io/badge/License-PHP--3.01-green.svg)](http://www.php.net/license/3_01.txt)
 [![Follow @iliaa](https://img.shields.io/badge/Follow-@iliaa-000000?style=flat&logo=x&logoColor=white)](https://x.com/intent/follow?screen_name=iliaa)
