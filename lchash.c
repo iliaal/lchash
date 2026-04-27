@@ -338,6 +338,7 @@ PHP_FUNCTION(lchash_create)
 	LCHASH_G(entries) = (lchash_entry *) ecalloc(
 		(size_t) n_entries, sizeof(lchash_entry));
 	LCHASH_G(entry_count) = 0;
+	LCHASH_G(entry_capacity) = (size_t) n_entries;
 #else
 	lchash_fb_create(&LCHASH_G(fallback), (size_t) n_entries);
 #endif
@@ -385,6 +386,25 @@ PHP_FUNCTION(lchash_insert)
 	zend_string *zstr = zend_string_init(val, val_len, 0);
 
 #ifdef HAVE_HSEARCH_R
+	/* Probe FIND first so a duplicate-key insert doesn't count against the
+	 * entry_capacity cap. Only fresh inserts consume an entries[] slot. */
+	{
+		ENTRY probe = { key, NULL };
+		ENTRY *hit = NULL;
+		if (hsearch_r(probe, FIND, &hit, &LCHASH_G(htab)) != 0 && hit != NULL) {
+			zend_string_release(zstr);
+			RETURN_TRUE;
+		}
+	}
+	if (LCHASH_G(entry_count) >= LCHASH_G(entry_capacity)) {
+		/* User asked for n_entries slots; hsearch_r's internal rounding
+		 * would let us overshoot, but our entries[] tracking is sized
+		 * exactly to n_entries. Refuse here to keep them in sync. */
+		zend_string_release(zstr);
+		errno = ENOMEM;
+		lchash_strerror_warn(errno);
+		RETURN_FALSE;
+	}
 	char *key_dup = estrdup(key);
 	ENTRY in = { key_dup, zstr };
 	ENTRY *out = NULL;

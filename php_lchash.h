@@ -86,8 +86,12 @@ ZEND_BEGIN_MODULE_GLOBALS(lchash)
 	uint64_t hash_seed;        /* FNV-1a seed; reseeded per request */
 #ifdef HAVE_HSEARCH_R
 	struct hsearch_data htab;
-	lchash_entry *entries;     /* pre-allocated to n_entries on create */
+	lchash_entry *entries;     /* pre-allocated to entry_capacity on create */
 	size_t entry_count;
+	/* glibc's hcreate_r(nel) internally rounds up (next prime >= 1.25*nel + 1)
+	 * so hsearch_r accepts more inserts than nel. Cap inserts at the user's
+	 * requested n_entries to keep entries[] sized correctly. */
+	size_t entry_capacity;
 #else
 	lchash_table fallback;
 #endif
