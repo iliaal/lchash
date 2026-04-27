@@ -140,10 +140,9 @@ jobs:
         run: |
           phpize
           ./configure --enable-lchash
-          sed -i 's|^#define HAVE_HSEARCH_R 1|/* #undef HAVE_HSEARCH_R */|; \
-                  s|^#define HAVE_HCREATE_R 1|/* #undef HAVE_HCREATE_R */|; \
-                  s|^#define HAVE_HDESTROY_R 1|/* #undef HAVE_HDESTROY_R */|' \
-              config.h
+          sed -i 's|^#define HAVE_HSEARCH_R 1|/* #undef HAVE_HSEARCH_R */|' config.h
+          sed -i 's|^#define HAVE_HCREATE_R 1|/* #undef HAVE_HCREATE_R */|' config.h
+          sed -i 's|^#define HAVE_HDESTROY_R 1|/* #undef HAVE_HDESTROY_R */|' config.h
           make -j$(nproc)
           php -d extension=$(pwd)/modules/lchash.so --ri lchash | grep Backend
 

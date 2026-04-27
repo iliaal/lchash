@@ -21,7 +21,9 @@
 #include "php.h"
 #include "php_ini.h"
 #include "ext/standard/info.h"
-#if PHP_VERSION_ID >= 80000
+/* The random extension was split out of ext/standard in PHP 8.2; older
+ * versions (7.x, 8.0, 8.1) keep the header at ext/standard/php_random.h. */
+#if PHP_VERSION_ID >= 80200
 # include "ext/random/php_random.h"
 #else
 # include "ext/standard/php_random.h"
