@@ -49,7 +49,6 @@ and Windows in addition to glibc Linux.
    <file role="src" name="php_lchash.h"/>
    <file role="doc" name="CHANGELOG.md"/>
    <file role="doc" name="CREDITS"/>
-   <file role="doc" name="EXPERIMENTAL"/>
    <file role="doc" name="LICENSE"/>
    <file role="doc" name="README.md"/>
    <file role="test" name="tests/001-load.phpt"/>
