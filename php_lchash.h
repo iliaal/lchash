@@ -17,7 +17,7 @@
 #ifndef PHP_LCHASH_H
 #define PHP_LCHASH_H
 
-#define PHP_LCHASH_VERSION "1.0.0-dev"
+#define PHP_LCHASH_VERSION "1.0.0"
 
 #ifdef HAVE_HSEARCH_R
 /* _GNU_SOURCE is set globally in config.m4 for this TU, which is required for

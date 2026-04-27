@@ -1,0 +1,30 @@
+# Read by /release-ext. Schema documented in ~/.claude/commands/release-ext.md.
+
+extension: lchash
+version_macro: PHP_LCHASH_VERSION
+version_file: php_lchash.h
+repo: iliaal/lchash
+
+# Local rebuild matrix /release-ext exercises before tagging. Each entry maps
+# to a $HOME/php-install-PHP-<entry> install; missing roots are skipped with a
+# warning rather than failing the release. CI covers the broader 7.4..8.5
+# range via .github/workflows/tests.yml.
+build_matrix:
+  - PHP-7.4
+  - PHP-8.3
+  - PHP-8.4
+  - PHP-8.5
+
+configure_base: "--enable-lchash"
+
+# Catches threading regressions in the hsearch_r path before release. Builds
+# against ~/php-install-PHP-8.4-zts using the same configure_base.
+extra_build_variants:
+  - name: "PHP 8.4 ZTS"
+    configure: "--enable-lchash"
+    php_version: PHP-8.4-zts
+
+# AddressSanitizer + UBSan run as part of /release-ext. Worth the wall time:
+# the extension does manual malloc/free in two backends (glibc hsearch_r and
+# the in-tree fallback), and a leak slipped into the 0.9.1 release.
+asan_test: true
