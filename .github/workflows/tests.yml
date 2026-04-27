@@ -113,3 +113,111 @@ jobs:
           arch: ${{ matrix.arch }}
           ts: ${{ matrix.ts }}
           run-tests: 'true'
+
+  # Forces the in-tree fallback path on a glibc Linux runner by stripping
+  # HAVE_HSEARCH_R from config.h after configure. Without this lane the
+  # fallback is only exercised on the Windows runner; this lets us catch
+  # fallback regressions across the full PHP version matrix.
+  linux-fallback:
+    name: PHP ${{ matrix.php }} - Linux NTS (in-tree fallback)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        php: ['7.4', '8.4', '8.5']
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          tools: phpize, php-config
+          coverage: none
+
+      - name: Build extension with HAVE_HSEARCH_R disabled
+        run: |
+          phpize
+          ./configure --enable-lchash
+          sed -i 's|^#define HAVE_HSEARCH_R 1|/* #undef HAVE_HSEARCH_R */|; \
+                  s|^#define HAVE_HCREATE_R 1|/* #undef HAVE_HCREATE_R */|; \
+                  s|^#define HAVE_HDESTROY_R 1|/* #undef HAVE_HDESTROY_R */|' \
+              config.h
+          make -j$(nproc)
+          php -d extension=$(pwd)/modules/lchash.so --ri lchash | grep Backend
+
+      - name: Run test suite (fallback backend)
+        env:
+          NO_INTERACTION: 1
+        run: |
+          export TEST_PHP_EXECUTABLE=$(which php)
+          export TEST_PHP_ARGS="-d extension=$(pwd)/modules/lchash.so"
+          php run-tests.php --show-diff -g FAIL,BORK,LEAK,XLEAK tests/
+
+  # AddressSanitizer + UBSan against PHP built from source with
+  # -fsanitize=address. Catches use-after-free, leaks, OOB on the manual
+  # malloc/free paths in both backends -- particularly the parallel
+  # entries[] tracking on the glibc path and the open-addressing slots
+  # on the fallback. Mirrors the php_clickhouse ASAN job, minus the
+  # service container.
+  asan:
+    name: PHP ${{ matrix.php }} - ASAN
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        php: ['8.4']
+
+    env:
+      ASAN_OPTIONS: exitcode=139:detect_odr_violation=0
+      UBSAN_OPTIONS: print_stacktrace=1
+      USE_ZEND_ALLOC: 0
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install dependencies
+        run: sudo apt-get update -qq && sudo apt-get install -y llvm clang re2c bison autoconf
+
+      - name: Resolve clang runtime dir
+        id: clang_rt
+        run: echo "dir=$(clang -print-runtime-dir)" >> "$GITHUB_OUTPUT"
+
+      - name: Build PHP with ASAN
+        env:
+          LD_LIBRARY_PATH: ${{ steps.clang_rt.outputs.dir }}
+        run: |
+          git clone --depth=1 --branch=PHP-${{ matrix.php }} https://github.com/php/php-src.git /tmp/php-src
+          cd /tmp/php-src
+          ./buildconf --force
+          # -shared-libasan: link ASan as a shared library so the dynamic
+          # linker can resolve interceptors across the dlopen'd extension.
+          CC=clang \
+          CFLAGS="-fsanitize=address,undefined -fno-sanitize=function,vptr -shared-libasan -DZEND_TRACK_ARENA_ALLOC" \
+          LDFLAGS="-fsanitize=address,undefined -shared-libasan" \
+          ./configure --enable-debug --disable-zts --disable-all --enable-cli --prefix=/tmp/php-asan
+          make -j$(nproc)
+          make install
+
+      - name: Build extension with ASAN
+        env:
+          LD_LIBRARY_PATH: ${{ steps.clang_rt.outputs.dir }}
+        run: |
+          export PATH="/tmp/php-asan/bin:$PATH"
+          phpize
+          # Match PHP's exact -fsanitize set so the runtime ABI lines up.
+          CC=clang \
+          CFLAGS="-fsanitize=address,undefined -fno-sanitize=function,vptr -shared-libasan -DZEND_TRACK_ARENA_ALLOC" \
+          LDFLAGS="-fsanitize=address,undefined -shared-libasan" \
+          ./configure --enable-lchash --with-php-config=/tmp/php-asan/bin/php-config
+          make -j$(nproc)
+
+      - name: Run tests under ASAN
+        env:
+          LD_LIBRARY_PATH: ${{ steps.clang_rt.outputs.dir }}
+          NO_INTERACTION: 1
+        run: |
+          export TEST_PHP_EXECUTABLE=/tmp/php-asan/bin/php
+          export TEST_PHP_ARGS="-d extension=$(pwd)/modules/lchash.so"
+          /tmp/php-asan/bin/php run-tests.php --show-diff --asan -g FAIL,BORK,LEAK,XLEAK tests/

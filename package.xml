@@ -60,6 +60,14 @@ and Windows in addition to glibc Linux.
    <file role="test" name="tests/021-empty-key.phpt"/>
    <file role="test" name="tests/022-uninit.phpt"/>
    <file role="test" name="tests/030-fallback-stress.phpt"/>
+   <file role="test" name="tests/031-binary-safe-value.phpt"/>
+   <file role="test" name="tests/040-duplicate-insert.phpt"/>
+   <file role="test" name="tests/041-duplicate-at-load-cap.phpt"/>
+   <file role="test" name="tests/050-tiny-table.phpt"/>
+   <file role="test" name="tests/051-zero-and-negative.phpt"/>
+   <file role="test" name="tests/052-too-many-entries.phpt"/>
+   <file role="test" name="tests/053-fill-to-capacity.phpt"/>
+   <file role="test" name="tests/060-no-explicit-destroy.phpt"/>
   </dir>
  </contents>
  <dependencies>
