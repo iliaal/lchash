@@ -6,6 +6,8 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-04-28
+
 ### Added
 - PHP 7.4, 8.0, 8.1, 8.2, 8.3, 8.4, 8.5 support (NTS and ZTS).
 - Vendored [klib khash](https://github.com/attractivechaos/klib) as the
@@ -74,3 +76,6 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 Original PECL release. Error handling fixes, binary-safe data storage.
 PHP 4 / PHP 5 only.
+
+[Unreleased]: https://github.com/iliaal/lchash/compare/1.0.0...HEAD
+[1.0.0]: https://github.com/iliaal/lchash/releases/tag/1.0.0

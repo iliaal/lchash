@@ -91,6 +91,14 @@ make
 make install
 ```
 
+### Windows
+
+Pre-built `.dll` zips are attached to every
+[release](https://github.com/iliaal/lchash/releases), covering
+PHP 8.3 / 8.4 / 8.5 × x64 / x86 × NTS / TS. Download the matching zip,
+extract `php_lchash.dll` into your `ext/` directory, and add
+`extension=lchash` to `php.ini`.
+
 ## API
 
 ### Procedural (single per-request table)
