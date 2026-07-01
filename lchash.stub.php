@@ -16,8 +16,10 @@ function lchash_create(int $n_entries): bool {}
 function lchash_destroy(): bool {}
 
 /**
- * Insert a string value under a NUL-free key. If the key already exists,
- * the existing value is preserved (matches glibc hsearch ENTER semantics).
+ * Insert a string value under a key. Keys are binary-safe: embedded NUL
+ * bytes are preserved and comparison is length-aware. If the key already
+ * exists, the existing value is preserved (matches glibc hsearch ENTER
+ * semantics).
  */
 function lchash_insert(string $key, string $value): bool {}
 
