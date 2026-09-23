@@ -1,13 +1,10 @@
 name: Release Windows binaries
 
-# Triggered when a GitHub Release is published (manual or from a tag push
-# via /release-ext). Builds the extension on every supported PHP version
-# x architecture x thread-safety variant on Windows runners, then
-# uploads each .dll as a release asset following the PIE-compatible
-# naming convention (php_lchash-<version>-<php_x.y>-<ts|nts>-vs17-<arch>.zip).
+# Runs when a GitHub Release is published. Builds every PHP version x arch x
+# thread-safety variant on Windows and uploads each .dll with the PIE naming
+# convention (php_lchash-<version>-<php_x.y>-<ts|nts>-vs17-<arch>.zip).
 #
-# Tests are off in this lane -- the test workflow already validated the
-# same arch/ts/php combinations on main.
+# Tests are off here because tests.yml already runs the same matrix on main.
 
 on:
   release:
@@ -60,11 +57,9 @@ jobs:
     name: Upload binaries to the release
     runs-on: ubuntu-latest
     needs: build
-    # GITHUB_TOKEN defaults to read-only for `contents:` on newer repos.
-    # The release/asset-upload API needs write access; without this block
-    # `gh release upload` returns HTTP 403 "Resource not accessible by
-    # integration". Bit me on the 1.0.0 release; binaries had to be
-    # uploaded by hand from the build artifacts.
+    # GITHUB_TOKEN is read-only for contents on newer repos. Without write
+    # access, `gh release upload` fails with HTTP 403 "Resource not
+    # accessible by integration".
     permissions:
       contents: write # Uploads Windows binaries to the published release.
     steps:

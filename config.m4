@@ -3,7 +3,7 @@ dnl config.m4 for extension lchash
 PHP_ARG_ENABLE([lchash],
   [for lchash support],
   [AS_HELP_STRING([--enable-lchash],
-    [Enable libc-style linear-probing hash table support])],
+    [Enable lchash string-keyed hash table support])],
   [no])
 
 if test "$PHP_LCHASH" != "no"; then

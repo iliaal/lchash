@@ -1,15 +1,10 @@
 <?php
 /**
- * lchash vs PHP-array micro-benchmark.
+ * lchash vs PHP-array micro-benchmark. Use a release build of PHP; debug
+ * builds inflate Zend MM overhead.
  *
- * Run inside a release-build PHP for representative numbers; debug builds
- * inflate Zend MM allocator overhead and skew the comparison.
- *
- * Reports:
- *   - Insert wall-clock time
- *   - Lookup wall-clock time (full scan over all keys)
- *   - Zend MM bytes (memory_get_usage(false), excludes libc malloc)
- *   - Process RSS delta (captures libc malloc that hsearch_r owns)
+ * Reports insert time, lookup time (one pass over all keys), Zend MM bytes
+ * (memory_get_usage(false)), and process RSS delta.
  */
 
 ini_set('memory_limit', '4096M');
@@ -136,8 +131,7 @@ function bench_lchash_oo(array $keys, array $values): array {
     ];
 }
 
-// Warm caches with a small unrelated allocation so the first bench
-// doesn't pay for arena setup.
+// Warm up the allocator so the first bench doesn't pay for arena setup.
 $_ = array_fill(0, 1024, 'x'); unset($_);
 
 $php = bench_php_array($keys, $values);

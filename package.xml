@@ -9,7 +9,7 @@
                       http://pear.php.net/dtd/package-2.1.xsd">
  <name>lchash</name>
  <channel>pecl.php.net</channel>
- <summary>Linear-probing hash table interface</summary>
+ <summary>String-keyed hash table backed by klib khash</summary>
  <description>
 Per-request string-keyed hash table backed by vendored klib khash.
 Exposes four procedural functions (lchash_create, lchash_destroy,

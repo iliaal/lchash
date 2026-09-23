@@ -5,23 +5,23 @@
 [![License: PHP-3.01](https://img.shields.io/badge/License-PHP--3.01-green.svg)](http://www.php.net/license/3_01.txt)
 [![Follow @iliaa](https://img.shields.io/badge/Follow-@iliaa-000000?style=flat&logo=x&logoColor=white)](https://x.com/intent/follow?screen_name=iliaa)
 
-A small PHP extension exposing a string-keyed hash table backed by
-[klib khash](https://github.com/attractivechaos/klib). Two surface APIs:
+A small PHP extension that provides a string-keyed hash table backed by
+[klib khash](https://github.com/attractivechaos/klib). It has two APIs:
 four procedural functions for a single per-request table (the original
-2005 API), plus an `LcHash` class with `$obj[$key]` dimension access for
-multiple per-instance tables.
+2005 API), and an `LcHash` class with `$obj[$key]` access for any number
+of per-instance tables.
 
-Supports PHP 7.4 through 8.5, both NTS and ZTS, on glibc Linux, musl,
-macOS, *BSD, and Windows.
+Supports PHP 7.4 through 8.5, NTS and ZTS, on glibc Linux, musl, macOS,
+*BSD, and Windows.
 
-Originally released to PECL in 2005; this 1.0.0 line is a full
-modernization for the PHP 7.4+ era.
+lchash first shipped on PECL in 2005. The 1.0.0 release rewrites it for
+PHP 7.4 and later.
 
 ## When to use this (and when not to)
 
-**Don't use it for raw speed.** PHP arrays remain faster on insert and
-lookup at every size we measured. The `bench/bench.php` script in this
-repo, run on a release build of PHP 8.4 NTS (glibc Linux x86_64, -O2):
+Don't use it for speed. PHP arrays are faster on insert and lookup at
+every size we measured. These numbers come from `bench/bench.php` on a
+release build of PHP 8.4 NTS (glibc Linux x86_64, -O2):
 
 | N entries  | Insert (array) | Insert (lchash proc) | Insert (lchash OO) | Lookup (array) | Lookup (lchash proc) | Lookup (lchash OO) | Mem (array) | Mem (lchash) |
 |-----------:|---------------:|---------------------:|-------------------:|---------------:|---------------------:|-------------------:|------------:|-------------:|
@@ -29,34 +29,28 @@ repo, run on a release build of PHP 8.4 NTS (glibc Linux x86_64, -O2):
 |    100,000 |         0.007s |               0.014s |             0.009s |         0.002s |               0.009s |             0.005s |     5.00 MB |      2.03 MB |
 |  1,000,000 |         0.111s |               0.161s |             0.185s |         0.052s |               0.102s |             0.101s |    40.0 MB  |     32.5 MB  |
 
-Reproducible via `php -d extension=$(pwd)/modules/lchash.so bench/bench.php <N>`.
+To reproduce, run `php -d extension=$(pwd)/modules/lchash.so bench/bench.php <N>`.
 
-Read it as: PHP arrays beat lchash by **1.4x to 1.7x on insert and
-2x on lookup** at scale. The gap is structural: PHP's HashTable uses
-a packed bucket layout with inlined zvals and opcode-level array-access
-specialization that no extension can match.
+At 1M entries, PHP arrays are 1.4x to 1.7x faster on insert and 2x
+faster on lookup. PHP's HashTable uses a packed bucket layout with
+inlined zvals and opcode-level array-access specialization, none of
+which an extension can use.
 
-The flip: **lchash uses less memory than PHP arrays at every size**
-(0.4x-0.8x), because keys and values are stored as refcount-shared
-zend_strings with no per-entry Bucket overhead. At 10k entries lchash
-holds ~40% of the memory PHP arrays do; at 1M it's ~80%.
+lchash uses less memory than PHP arrays at every size: about 40% of
+the array's memory at 10k entries and about 80% at 1M. Keys and values
+are refcount-shared zend_strings with no per-entry Bucket overhead.
 
-**Legitimate reasons to reach for lchash:**
+Reasons to use lchash:
 
-- **Memory-tight workloads.** A long-running CLI worker holding
-  hundreds of thousands of small string mappings will save real RAM
-  vs. native arrays.
-- **Porting C code.** If you have a C codebase using POSIX
-  `hsearch_r` and want a near-1:1 PHP shim while migrating, the
-  procedural API's "first writer wins" semantics line up exactly with
+- Memory-tight workloads. A long-running CLI worker that holds hundreds
+  of thousands of small string mappings uses less RAM than with arrays.
+- Porting C code. If you're migrating a C codebase that uses POSIX
+  `hsearch_r`, the procedural API's first-writer-wins semantics match
   glibc `hsearch(ENTER)`.
-- **Legacy compatibility.** PECL has had this extension since 2005;
-  some long-running codebases depend on the function names being
-  stable. This release modernizes the implementation without
-  changing the four-function surface.
-- **Demonstration.** It's a small, focused, header-only-vendor-backed
-  PECL extension that's a clean reading example for anyone learning
-  PHP extension development.
+- Legacy compatibility. The four function names are unchanged from the
+  2005 PECL release, for codebases that depend on them.
+- Learning. It's a small PECL extension with one vendored header, easy
+  to read if you're learning PHP extension development.
 
 For most code, use a PHP array.
 
@@ -64,9 +58,9 @@ For most code, use a PHP array.
 
 ### PIE (recommended on PHP 8.x)
 
-[PIE](https://github.com/php/pie) is the PHP Foundation's PECL
-successor. It installs from Packagist, builds against the active
-`php-config`, and produces a loadable `.so` / `.dll`.
+[PIE](https://github.com/php/pie) is the PHP Foundation's successor to
+PECL. It installs from Packagist and builds against the active
+`php-config`.
 
 ```sh
 pie install iliaal/lchash
@@ -76,7 +70,7 @@ Then add `extension=lchash` to your `php.ini`.
 
 ### PECL
 
-The package remains in the PECL channel for legacy installers:
+The package is still on the PECL channel:
 
 ```sh
 pecl install lchash
@@ -93,11 +87,10 @@ make install
 
 ### Windows
 
-Pre-built `.dll` zips are attached to every
-[release](https://github.com/iliaal/lchash/releases), covering
-PHP 8.3 / 8.4 / 8.5 × x64 / x86 × NTS / TS. Download the matching zip,
-extract `php_lchash.dll` into your `ext/` directory, and add
-`extension=lchash` to `php.ini`.
+Every [release](https://github.com/iliaal/lchash/releases) has
+pre-built `.dll` zips for PHP 8.3 / 8.4 / 8.5 × x64 / x86 × NTS / TS.
+Download the matching zip, extract `php_lchash.dll` into your `ext/`
+directory, and add `extension=lchash` to `php.ini`.
 
 ## API
 
@@ -122,39 +115,43 @@ unset($lc[$key]);         // unset_dimension
 
 ### Semantics
 
-- **Procedural:** one table per request. Calling `lchash_create()`
-  twice without an intervening `lchash_destroy()` returns `false`
-  and emits a warning. The table is destroyed at request shutdown
-  if userland forgets to call `lchash_destroy()`.
-- **OO:** one table per `LcHash` instance, allocated lazily on first
-  write. Destroyed when the object is freed.
-- `n_entries` is capped at 1,048,576 (`1<<20`). Larger requests are
-  rejected (warning + `false` for the procedural API, exception for
-  the OO API).
-- **Binary-safe.** Keys and values may contain arbitrary bytes
-  including NUL. Comparison is length-aware, not strcmp-based.
+Both APIs:
+
+- `n_entries` is capped at 1,048,576 (`1<<20`).
+- Keys and values may contain any bytes, including NUL. Comparison is
+  length-aware.
 - Keys must be non-empty.
-- **Procedural:** first writer wins. Inserting a key that already
-  exists returns `true` without overwriting (matches glibc
-  `hsearch(ENTER)`).
-- **OO:** last writer wins. `$lc[$key] = $value` overwrites if
-  present (matches PHP-array idiom).
-- **Procedural** errors are signalled via `E_WARNING` + `false`
-  return, not exceptions, for compatibility with the 2005 API.
-- **OO** errors throw `Error` (capacity exceeded, empty key, etc.).
+
+Procedural API:
+
+- One table per request. Calling `lchash_create()` twice without
+  `lchash_destroy()` in between emits a warning and returns `false`.
+  If you don't call `lchash_destroy()`, the table is freed at request
+  shutdown.
+- First writer wins. Inserting an existing key returns `true` and keeps
+  the old value, like glibc `hsearch(ENTER)`.
+- Errors emit `E_WARNING` and return `false`, for compatibility with
+  the 2005 API.
+
+OO API:
+
+- Each `LcHash` instance has its own table, allocated on first write and
+  freed with the object.
+- Last writer wins. `$lc[$key] = $value` overwrites an existing key, as
+  with PHP arrays.
+- Errors throw `Error` (capacity exceeded, empty key, and so on).
 
 ## Backend
 
-`lchash` ships a single backend: vendored
+lchash uses one backend on every platform: a vendored copy of
 [klib khash](https://github.com/attractivechaos/klib) (header-only,
-MIT-licensed, embedded in the extension as `khash.h`). No external
-dependency, no build-time probe, identical behavior across all
-supported platforms.
+MIT-licensed) in `khash.h`. It has no external dependencies and no
+build-time probes.
 
-The hash function is PHP's own DJBX33A (`zend_string_hash_val`) for
-both APIs, so attack surface against collision-DoS is identical to
-PHP arrays themselves. klib's open-addressing layout degrades
-slightly more gracefully than chained buckets under heavy collision.
+Both APIs hash keys with PHP's DJBX33A (`zend_string_hash_val`), so
+collision-DoS exposure is the same as for PHP arrays. klib's
+open-addressing layout degrades slightly more gracefully than chained
+buckets under heavy collision.
 
 ## License
 

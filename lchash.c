@@ -33,15 +33,13 @@
 #include <errno.h>
 #include <string.h>
 
-/* RETURN_THROWS arrived in PHP 8.0; before that, throwing an Error from
- * a userland function just falls through without a special macro. */
+/* RETURN_THROWS() is PHP 8.0+. */
 #if PHP_VERSION_ID < 80000
 # define RETURN_THROWS() return
 #endif
 
-/* Wire klib's allocator hooks to Zend MM. The bucket array, the
- * khash_t struct itself, and any rehashes go through the request-scoped
- * allocator and so participate in Zend's leak detector on debug builds. */
+/* Route klib allocations through Zend MM so they count against
+ * memory_limit and show up in the debug-build leak detector. */
 #define kmalloc(Z)     emalloc(Z)
 #define kcalloc(N, Z)  ecalloc((N), (Z))
 #define krealloc(P, Z) erealloc((P), (Z))
@@ -49,11 +47,9 @@
 
 #include "khash.h"
 
-/* zend_string *-keyed khash flavor. Used by both the procedural API
- * (one global table) and the OO API (per-instance tables). Reuses the
- * engine's cached DJBX33A hash and zend_string_equals (length + memcmp),
- * so per-entry keys are refcount bumps on the caller's string and keys
- * are binary-safe (NUL bytes preserved, length-aware comparison). */
+/* Keys and values are refcounted zend_strings. Hashing reuses the cached
+ * zend_string hash and comparison is length + memcmp, so keys are
+ * binary-safe. */
 #define lchash_zs_hash_func(s) ((khint_t) zend_string_hash_val(s))
 #define lchash_zs_eq_func(a, b) zend_string_equals((a), (b))
 
@@ -62,8 +58,8 @@ KHASH_INIT(lchashz, zend_string *, zend_string *, 1,
 
 #define LCHASH_TABLE() ((khash_t(lchashz) *) LCHASH_G(table))
 
-/* Hard ceiling on n_entries. Single-call DoS guard: PHP_INT_MAX-class
- * arguments would otherwise drag the worker through memory_limit. */
+/* Without a cap, a single call with n_entries near PHP_INT_MAX would
+ * run the worker into memory_limit. */
 #define LCHASH_MAX_ENTRIES (1u << 20)
 
 ZEND_DECLARE_MODULE_GLOBALS(lchash)
@@ -146,15 +142,13 @@ static void lchash_free_object(zend_object *obj)
 	zend_object_std_dtor(&intern->std);
 }
 
-/* Lazy allocator: defer the bucket-array allocation until the first
- * write. Constructing many empty LcHash instances should not cost
- * max_entries worth of bucket flags+keys+vals up front. */
+/* Allocate on first write so empty instances don't pay for
+ * max_entries buckets up front. */
 static inline void lchash_ensure_table(lchash_object *intern)
 {
 	if (UNEXPECTED(intern->table == NULL)) {
 		intern->table = kh_init(lchashz);
-		/* Caller's max_entries is a size hint; klib's load factor and
-		 * power-of-2 rounding are handled inside kh_resize. */
+		/* kh_resize applies the load factor and power-of-2 rounding. */
 		kh_resize(lchashz, intern->table, (khint_t) intern->max_entries);
 	}
 }
@@ -225,10 +219,9 @@ static void lchash_write_dimension(LCHASH_OBJ_PARAM, zval *offset, zval *value)
 
 	lchash_ensure_table(intern);
 
-	/* Single-probe insert/update: kh_put returns ret==0 if the key already
-	 * existed, ret==1 for a new bucket, ret==2 for a deleted-bucket reuse.
-	 * Pre-bumping the key's refcount lets klib retain the pointer; we drop
-	 * the bump on the existing-key branch since klib won't store it. */
+	/* kh_put sets ret to 0 for an existing key, 1 for a new bucket, and 2
+	 * for a reused deleted bucket. klib keeps the key pointer only for new
+	 * buckets, so the extra ref is dropped when ret == 0. */
 	zend_string *stored_key = zend_string_copy(key);
 	int ret;
 	khint_t iter = kh_put(lchashz, intern->table, stored_key, &ret);
@@ -241,18 +234,16 @@ static void lchash_write_dimension(LCHASH_OBJ_PARAM, zval *offset, zval *value)
 	}
 
 	if (ret == 0) {
-		/* Existing key: replace value. Bump-then-release ordering protects
-		 * against $lc[$k] = $lc[$k] aliasing where the read result holds
-		 * the only refcount on the prior value. */
+		/* Copy before release: in $lc[$k] = $lc[$k], val_str can be the
+		 * stored value itself. */
 		zend_string_release(stored_key);
 		zend_string *new_val = zend_string_copy(val_str);
 		zend_string *old_val = kh_val(intern->table, iter);
 		kh_val(intern->table, iter) = new_val;
 		zend_string_release(old_val);
 	} else {
-		/* New entry. Capacity check happens post-insert: kh_put may have
-		 * grown the bucket array; if we now exceed the user's cap, undo
-		 * the bucket placement (kh_del marks it deleted, geometry stays). */
+		/* The cap is checked after kh_put. On overflow, kh_del marks the
+		 * bucket deleted; any growth kh_put did stays. */
 		if (UNEXPECTED(kh_size(intern->table) > intern->max_entries)) {
 			kh_del(lchashz, intern->table, iter);
 			zend_string_release(stored_key);
@@ -349,7 +340,6 @@ PHP_METHOD(LcHash, __construct)
 		zend_throw_error(NULL, "LcHash is already constructed");
 		RETURN_THROWS();
 	}
-	/* Lazy allocation: don't touch the bucket array until first write. */
 	intern->max_entries = (uint32_t) n_entries;
 }
 
@@ -387,8 +377,7 @@ PHP_RINIT_FUNCTION(lchash)
 #if defined(COMPILE_DL_LCHASH) && defined(ZTS)
 	ZEND_TSRMLS_CACHE_UPDATE();
 #endif
-	/* Defense-in-depth: if a prior request leaked through without
-	 * RSHUTDOWN unwinding, tear down before fresh init. */
+	/* Free a table left over from a request whose RSHUTDOWN didn't run. */
 	if (LCHASH_G(table)) {
 		lchash_table_destroy();
 	}
@@ -472,10 +461,9 @@ PHP_FUNCTION(lchash_insert)
 
 	khash_t(lchashz) *h = LCHASH_TABLE();
 
-	/* Single-probe insert: kh_put returns ret==0 if the key already
-	 * existed (first writer wins, matches glibc hsearch ENTER semantics),
-	 * ret==1|2 for a new bucket. Capacity check is post-insert; on
-	 * overflow we undo the bucket placement via kh_del. */
+	/* ret == 0 means the key exists: first writer wins, as with glibc
+	 * hsearch(ENTER). The cap is checked after kh_put; on overflow,
+	 * kh_del undoes the insert. */
 	zend_string *stored_key = zend_string_copy(key);
 	int ret;
 	khint_t iter = kh_put(lchashz, h, stored_key, &ret);
@@ -485,8 +473,6 @@ PHP_FUNCTION(lchash_insert)
 		RETURN_FALSE;
 	}
 	if (ret == 0) {
-		/* First writer wins: drop our refcount bump on the key,
-		 * leave the existing value untouched. */
 		zend_string_release(stored_key);
 		RETURN_TRUE;
 	}

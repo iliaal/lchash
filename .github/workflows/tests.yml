@@ -130,10 +130,8 @@ jobs:
           export TEST_PHP_ARGS="-d extension=$(pwd)/modules/lchash.so"
           /tmp/php-zts/bin/php run-tests.php --show-diff -g FAIL,BORK,LEAK,XLEAK tests/
 
-  # Windows extension builds need the official PHP SDK + matching MSVC
-  # toolset, not the autotools phpize/configure flow. The php-org
-  # composite action below bundles SDK download, VS detection,
-  # phpize / configure / nmake invocation, and a .dll smoke load.
+  # Windows builds need the PHP SDK and a matching MSVC toolset, which
+  # php-windows-builder sets up along with the build and a .dll smoke load.
   windows-matrix:
     name: Resolve Windows matrix
     runs-on: ubuntu-latest
@@ -168,10 +166,8 @@ jobs:
           run-tests: 'true'
 
   # AddressSanitizer + UBSan against PHP built from source with
-  # -fsanitize=address. Catches use-after-free, leaks, OOB across the
-  # khash backend's allocator hooks and the OO class's per-instance
-  # table lifecycle. Mirrors the php_clickhouse ASAN job, minus the
-  # service container.
+  # -fsanitize=address, for use-after-free, leaks, and out-of-bounds
+  # access in table and refcount handling.
   asan:
     name: PHP ${{ matrix.php }} - ASAN
     runs-on: ubuntu-latest
@@ -181,11 +177,10 @@ jobs:
         php: ['8.4']
 
     env:
-      # detect_leaks=1 pinned explicitly. LSan's default is on under
-      # Linux ASan; pinning prevents a future ASAN_OPTIONS edit from
-      # silently flipping it. Narrow known-good leaks go in
-      # .github/lsan-suppressions.txt; prefer that over blanket
-      # detect_leaks=0. See ~/ai/wiki/debugging/asan-php-extension.md.
+      # detect_leaks=1 is already the Linux default; pinning it keeps a
+      # later ASAN_OPTIONS edit from turning it off. Suppress known-good
+      # leaks narrowly in .github/lsan-suppressions.txt instead of
+      # setting detect_leaks=0.
       ASAN_OPTIONS: exitcode=139:detect_odr_violation=0:detect_leaks=1
       LSAN_OPTIONS: suppressions=${{ github.workspace }}/.github/lsan-suppressions.txt:print_suppressions=0
       UBSAN_OPTIONS: print_stacktrace=1

@@ -1,5 +1,5 @@
 --TEST--
-Insert/find at moderate scale exercises probing on the active backend
+Insert and find 500 keys
 --EXTENSIONS--
 lchash
 --FILE--

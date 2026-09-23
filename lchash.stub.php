@@ -29,9 +29,8 @@ function lchash_find(string $key): string|false {}
 /**
  * Object-oriented hash table with $obj[$key] dimension access.
  *
- * Stores keys/values as refcounted zend_strings rather than estrdup'd
- * copies, and uses standard PHP-array overwrite semantics on assignment
- * (the procedural API's "first writer wins" is preserved separately).
+ * Assignment overwrites an existing key, as with PHP arrays. The
+ * procedural API keeps first-writer-wins semantics.
  */
 final class LcHash
 {

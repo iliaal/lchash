@@ -45,7 +45,7 @@ PHP_FUNCTION(lchash_insert);
 PHP_FUNCTION(lchash_find);
 
 ZEND_BEGIN_MODULE_GLOBALS(lchash)
-	void *table;     /* khash_t(lchash) *, opaque outside lchash.c */
+	void *table;     /* khash_t(lchashz) *, opaque outside lchash.c */
 ZEND_END_MODULE_GLOBALS(lchash)
 
 #if defined(ZTS) && defined(COMPILE_DL_LCHASH)

@@ -6,20 +6,18 @@ lchash
 <?php
 lchash_create(8);
 
-// Empty key: still rejected.
+// Empty key is rejected.
 var_dump(lchash_insert('', 'value'));
 
-// NUL byte in key: now accepted, length-aware.
+// Keys with NUL bytes are accepted and compared by length.
 var_dump(lchash_insert("a\0b", 'first'));
 var_dump(lchash_insert("a\0c", 'second'));   // distinct from "a\0b"
 var_dump(lchash_insert("a", 'third'));       // distinct from "a\0b"
 
-// Round-trip each.
 var_dump(lchash_find("a\0b") === 'first');
 var_dump(lchash_find("a\0c") === 'second');
 var_dump(lchash_find("a") === 'third');
 
-// Sanity: regular insert still works.
 var_dump(lchash_insert('ok', 'value'));
 var_dump(lchash_find('ok'));
 

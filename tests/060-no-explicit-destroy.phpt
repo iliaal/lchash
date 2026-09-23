@@ -4,9 +4,8 @@ Skipping lchash_destroy() does not leak (RSHUTDOWN cleans up)
 lchash
 --FILE--
 <?php
-// Userland forgets to destroy. Run-tests.php's leak detector under
-// debug builds will surface any uncleaned per-entry state at request
-// shutdown. The test passes by running clean under -g LEAK,XLEAK.
+// On debug builds, run-tests.php reports a LEAK if RSHUTDOWN misses
+// any entry.
 lchash_create(64);
 for ($i = 0; $i < 50; $i++) {
     lchash_insert("k$i", str_repeat('x', 32));

@@ -4,8 +4,6 @@ Inserting past capacity reports a clean error, not a crash
 lchash
 --FILE--
 <?php
-// Small table, fill until insert refuses. Both backends should refuse
-// gracefully (warning + false) rather than overflow or corrupt state.
 lchash_create(4);
 $accepted = 0;
 for ($i = 0; $i < 100; $i++) {
