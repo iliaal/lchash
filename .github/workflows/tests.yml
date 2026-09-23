@@ -94,7 +94,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        php: ['8.4']
+        php: ['8.4', '8.6']
     env:
       PHP_VERSION: ${{ matrix.php }}
 
@@ -129,6 +129,50 @@ jobs:
           export TEST_PHP_EXECUTABLE=/tmp/php-zts/bin/php
           export TEST_PHP_ARGS="-d extension=$(pwd)/modules/lchash.so"
           /tmp/php-zts/bin/php run-tests.php --show-diff -g FAIL,BORK,LEAK,XLEAK tests/
+
+  # setup-php has no PHP-8.6 branch build, so 8.6 NTS is built from
+  # php-src's PHP-8.6 branch in release mode.
+  linux-src:
+    name: PHP ${{ matrix.php }} - Linux (PHP-${{ matrix.php }} branch)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        php: ['8.6']
+    env:
+      PHP_VERSION: ${{ matrix.php }}
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install build deps
+        run: sudo apt-get update -qq && sudo apt-get install -y re2c bison autoconf
+
+      - name: Build PHP from source
+        run: |
+          git clone --depth=1 --branch="PHP-${PHP_VERSION}" https://github.com/php/php-src.git /tmp/php-src
+          cd /tmp/php-src
+          ./buildconf --force
+          ./configure --disable-debug --disable-zts --disable-all --enable-cli --prefix=/tmp/php-nts
+          make -j$(nproc)
+          make install
+
+      - name: Build extension
+        run: |
+          export PATH="/tmp/php-nts/bin:$PATH"
+          phpize
+          ./configure --enable-lchash --with-php-config=/tmp/php-nts/bin/php-config
+          make -j$(nproc)
+
+      - name: Run test suite
+        env:
+          NO_INTERACTION: 1
+        run: |
+          export TEST_PHP_EXECUTABLE=/tmp/php-nts/bin/php
+          export TEST_PHP_ARGS="-d extension=$(pwd)/modules/lchash.so"
+          /tmp/php-nts/bin/php run-tests.php --show-diff -g FAIL,BORK,LEAK,XLEAK tests/
 
   # Windows builds need the PHP SDK and a matching MSVC toolset, which
   # php-windows-builder sets up along with the build and a .dll smoke load.
@@ -174,7 +218,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        php: ['8.4']
+        php: ['8.4', '8.6']
 
     env:
       # detect_leaks=1 is already the Linux default; pinning it keeps a
