@@ -111,7 +111,7 @@ static zend_object_handlers lchash_object_handlers;
 
 static inline lchash_object *lchash_obj_from_zend(zend_object *obj)
 {
-	return (lchash_object *) ((char *) obj - XtOffsetOf(lchash_object, std));
+	return (lchash_object *) ((char *) obj - offsetof(lchash_object, std));
 }
 
 static zend_object *lchash_create_object(zend_class_entry *ce)
@@ -361,7 +361,7 @@ PHP_MINIT_FUNCTION(lchash)
 
 	memcpy(&lchash_object_handlers, zend_get_std_object_handlers(),
 		sizeof(zend_object_handlers));
-	lchash_object_handlers.offset = XtOffsetOf(lchash_object, std);
+	lchash_object_handlers.offset = offsetof(lchash_object, std);
 	lchash_object_handlers.free_obj = lchash_free_object;
 	lchash_object_handlers.clone_obj = NULL;
 	lchash_object_handlers.read_dimension = lchash_read_dimension;
