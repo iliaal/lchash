@@ -17,7 +17,7 @@
 #ifndef PHP_LCHASH_H
 #define PHP_LCHASH_H
 
-#define PHP_LCHASH_VERSION "1.0.0"
+#define PHP_LCHASH_VERSION "1.0.1"
 
 extern zend_module_entry lchash_module_entry;
 #define phpext_lchash_ptr &lchash_module_entry

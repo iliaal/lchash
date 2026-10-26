@@ -6,6 +6,21 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.0.1] - 2026-10-26
+
+### Added
+- `SECURITY.md` with the supported-versions table and private
+  vulnerability reporting instructions.
+
+### Fixed
+- Builds against PHP 8.6, which removed `XtOffsetOf()`; the object
+  offset now uses `offsetof()`.
+- The `lchash_insert()` docblock in `lchash.stub.php` says keys are
+  binary-safe; it used to say keys must be NUL-free.
+- The `composer.json` description, `package.xml` summary, and
+  `--enable-lchash` help text describe the klib khash backend instead of
+  the removed linear-probing and `hsearch_r` backends.
+
 ## [1.0.0] - 2026-04-28
 
 ### Added
@@ -71,5 +86,6 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Original PECL release. Error handling fixes, binary-safe data storage.
 PHP 4 / PHP 5 only.
 
-[Unreleased]: https://github.com/iliaal/lchash/compare/1.0.0...HEAD
+[Unreleased]: https://github.com/iliaal/lchash/compare/1.0.1...HEAD
+[1.0.1]: https://github.com/iliaal/lchash/releases/tag/1.0.1
 [1.0.0]: https://github.com/iliaal/lchash/releases/tag/1.0.0
