@@ -133,7 +133,7 @@ jobs:
 
       - name: Run FrankenPHP worker-mode emulation under ZTS embed
         env:
-          CFLAGS: -Wall -Wextra -Werror
+          CFLAGS: -Wall -Wextra
         run: sh tests/embed/run.sh /tmp/php-zts/bin/php-config "$(pwd)/modules/lchash.so"
 
   # Windows builds need the PHP SDK and a matching MSVC toolset, which

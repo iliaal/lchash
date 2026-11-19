@@ -11,6 +11,7 @@
 #include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #ifndef ZTS
 # error "worker-requests needs a ZTS libphp"
@@ -21,20 +22,12 @@
 #define HTTP_REQUESTS 10
 
 static int failures[THREADS];
+static int handled[THREADS];
 
-static int handle_http_request(int tid, int run, int req)
+static int eval_true(const char *code)
 {
-	char code[512];
 	zval rv;
 	volatile int ok = 0;
-
-	snprintf(code, sizeof(code),
-		"(function () {"
-		" $c = @lchash_create(16);"
-		" lchash_insert('u', 't%dr%dq%d');"
-		" return $c === true && lchash_find('u') === 't%dr%dq%d';"
-		" })()",
-		tid, run, req, tid, run, req);
 
 	zend_try {
 		if (zend_eval_string(code, &rv, "worker-request") == SUCCESS) {
@@ -47,6 +40,20 @@ static int handle_http_request(int tid, int run, int req)
 		}
 	} zend_end_try();
 	return ok;
+}
+
+static int handle_http_request(int tid, int run, int req)
+{
+	char code[1024];
+
+	snprintf(code, sizeof(code),
+		"(function () {"
+		" $c = @lchash_create(16);"
+		" lchash_insert('u', 't%dr%dq%d');"
+		" return $c === true && lchash_find('u') === 't%dr%dq%d';"
+		" })()",
+		tid, run, req, tid, run, req);
+	return eval_true(code);
 }
 
 static void between_http_requests(void)
@@ -72,6 +79,7 @@ static void *worker_thread(void *arg)
 			if (!handle_http_request(tid, run, req)) {
 				failures[tid]++;
 			}
+			handled[tid]++;
 			if (req + 1 < HTTP_REQUESTS) {
 				between_http_requests();
 			}
@@ -84,20 +92,36 @@ static void *worker_thread(void *arg)
 
 int main(int argc, char **argv)
 {
-	volatile int total = 0, loaded = 0;
+	const int expected = THREADS * WORKER_RUNS * HTTP_REQUESTS;
+	volatile int total = 0, completed = 0, loaded = 0, thread_errors = 0;
 
 	PHP_EMBED_START_BLOCK(argc, argv)
 		loaded = zend_hash_str_exists(&module_registry, "lchash", sizeof("lchash") - 1);
 		if (loaded) {
 			pthread_t th[THREADS];
+			int started[THREADS] = {0};
 			for (int i = 0; i < THREADS; i++) {
-				pthread_create(&th[i], NULL, worker_thread, (void *) (intptr_t) i);
+				int rc = pthread_create(&th[i], NULL, worker_thread, (void *) (intptr_t) i);
+				if (rc != 0) {
+					fprintf(stderr, "pthread_create: %s\n", strerror(rc));
+					thread_errors++;
+				} else {
+					started[i] = 1;
+				}
 			}
 			for (int i = 0; i < THREADS; i++) {
-				pthread_join(th[i], NULL);
+				if (!started[i]) {
+					continue;
+				}
+				int rc = pthread_join(th[i], NULL);
+				if (rc != 0) {
+					fprintf(stderr, "pthread_join: %s\n", strerror(rc));
+					thread_errors++;
+				}
 			}
 			for (int i = 0; i < THREADS; i++) {
 				total += failures[i];
+				completed += handled[i];
 			}
 		}
 	PHP_EMBED_END_BLOCK()
@@ -106,6 +130,7 @@ int main(int argc, char **argv)
 		fprintf(stderr, "lchash is not loaded\n");
 		return 2;
 	}
-	printf("http_requests=%d failures=%d\n", THREADS * WORKER_RUNS * HTTP_REQUESTS, total);
-	return total == 0 ? 0 : 1;
+	printf("http_requests=%d/%d failures=%d thread_errors=%d\n",
+		completed, expected, total, thread_errors);
+	return total == 0 && completed == expected && thread_errors == 0 ? 0 : 1;
 }
