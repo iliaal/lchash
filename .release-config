@@ -7,12 +7,13 @@ repo: iliaal/lchash
 
 # Local rebuild matrix /release-ext runs before tagging. Each entry maps to a
 # $HOME/php-install-PHP-<entry> install; missing roots are skipped with a
-# warning. CI covers 7.4..8.5 in .github/workflows/tests.yml.
+# warning. CI covers 7.4..8.6 in .github/workflows/tests.yml.
 build_matrix:
   - PHP-7.4
   - PHP-8.3
   - PHP-8.4
   - PHP-8.5
+  - PHP-8.6
 
 configure_base: "--enable-lchash"
 
@@ -28,5 +29,5 @@ extra_build_variants:
 asan_test: true
 
 # Windows binaries ship via .github/workflows/release-windows.yml on every
-# GitHub Release: PHP 8.3/8.4/8.5 x x64/x86 x NTS/TS via php-windows-builder.
+# GitHub Release: PHP 8.3/8.4/8.5/8.6 x x64/x86 x NTS/TS via php-windows-builder.
 windows_ci: true

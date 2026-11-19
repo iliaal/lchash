@@ -6,6 +6,9 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- Windows binaries for PHP 8.6 (x64/x86, NTS/TS) on every release.
+
 ## [1.0.1] - 2026-10-26
 
 ### Added
