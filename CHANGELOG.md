@@ -9,6 +9,10 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Added
 - Windows binaries for PHP 8.6 (x64/x86, NTS/TS) on every release.
 
+### Fixed
+- In FrankenPHP worker mode the procedural table no longer carries over into
+  the next HTTP request, where `lchash_create()` failed with "Hash table already exists".
+
 ## [1.0.1] - 2026-10-26
 
 ### Added

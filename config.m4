@@ -7,5 +7,5 @@ PHP_ARG_ENABLE([lchash],
   [no])
 
 if test "$PHP_LCHASH" != "no"; then
-  PHP_NEW_EXTENSION(lchash, lchash.c, $ext_shared)
+  PHP_NEW_EXTENSION(lchash, lchash.c, $ext_shared,, -DZEND_ENABLE_STATIC_TSRMLS_CACHE=1)
 fi

@@ -112,7 +112,7 @@ jobs:
           git clone --depth=1 --branch="PHP-${PHP_VERSION}" https://github.com/php/php-src.git /tmp/php-src
           cd /tmp/php-src
           ./buildconf --force
-          ./configure --enable-zts --disable-all --enable-cli --prefix=/tmp/php-zts
+          ./configure --enable-zts --disable-all --enable-cli --enable-embed --prefix=/tmp/php-zts
           make -j$(nproc)
           make install
 
@@ -130,6 +130,11 @@ jobs:
           export TEST_PHP_EXECUTABLE=/tmp/php-zts/bin/php
           export TEST_PHP_ARGS="-d extension=$(pwd)/modules/lchash.so"
           /tmp/php-zts/bin/php run-tests.php --show-diff -g FAIL,BORK,LEAK,XLEAK tests/
+
+      - name: Run FrankenPHP worker-mode emulation under ZTS embed
+        env:
+          CFLAGS: -Wall -Wextra
+        run: sh tests/embed/run.sh /tmp/php-zts/bin/php-config "$(pwd)/modules/lchash.so"
 
   # Windows builds need the PHP SDK and a matching MSVC toolset, which
   # php-windows-builder sets up along with the build and a .dll smoke load.
