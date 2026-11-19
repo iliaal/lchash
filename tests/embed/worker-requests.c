@@ -68,14 +68,22 @@ static int handle_http_request(int tid, int run, int req)
 	return eval_true(code);
 }
 
-static void between_http_requests(void)
+/* The released object's destructor can only create the table, and store
+ * the late marker, if sapi_deactivate() freed the previous request's. */
+static int between_http_requests(void)
 {
+	int ok;
+
 	zend_try { php_output_end_all(); } zend_end_try();
 	zend_try { php_output_deactivate(); } zend_end_try();
 	zend_try { sapi_deactivate(); } zend_end_try();
-	(void) eval_true("(function () { unset($GLOBALS['late']); return true; })()");
+	ok = eval_true("(function () {"
+		" unset($GLOBALS['late']);"
+		" return @lchash_find('late') === 'stale';"
+		" })()");
 	php_output_activate();
 	sapi_activate();
+	return ok;
 }
 
 static void *worker_thread(void *arg)
@@ -93,8 +101,8 @@ static void *worker_thread(void *arg)
 				failures[tid]++;
 			}
 			handled[tid]++;
-			if (req + 1 < HTTP_REQUESTS) {
-				between_http_requests();
+			if (req + 1 < HTTP_REQUESTS && !between_http_requests()) {
+				failures[tid]++;
 			}
 		}
 		php_request_shutdown(NULL);
