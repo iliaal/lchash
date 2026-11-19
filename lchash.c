@@ -347,15 +347,16 @@ PHP_METHOD(LcHash, __construct)
  * Module lifecycle
  * ------------------------------------------------------------------------ */
 
-static void php_lchash_init_globals(zend_lchash_globals *g)
+static PHP_GINIT_FUNCTION(lchash)
 {
-	memset(g, 0, sizeof(*g));
+#if defined(COMPILE_DL_LCHASH) && defined(ZTS)
+	ZEND_TSRMLS_CACHE_UPDATE();
+#endif
+	memset(lchash_globals, 0, sizeof(*lchash_globals));
 }
 
 PHP_MINIT_FUNCTION(lchash)
 {
-	ZEND_INIT_MODULE_GLOBALS(lchash, php_lchash_init_globals, NULL);
-
 	lchash_ce = register_class_LcHash();
 	lchash_ce->create_object = lchash_create_object;
 
@@ -523,7 +524,11 @@ zend_module_entry lchash_module_entry = {
 	PHP_RSHUTDOWN(lchash),
 	PHP_MINFO(lchash),
 	PHP_LCHASH_VERSION,
-	STANDARD_MODULE_PROPERTIES
+	PHP_MODULE_GLOBALS(lchash),
+	PHP_GINIT(lchash),
+	NULL,                    /* GSHUTDOWN */
+	NULL,                    /* post-deactivate */
+	STANDARD_MODULE_PROPERTIES_EX
 };
 
 #ifdef COMPILE_DL_LCHASH
