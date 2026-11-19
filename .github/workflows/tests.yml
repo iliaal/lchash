@@ -21,7 +21,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # 2.40.0
+      # setup-php main until a release marks PHP 8.6 stable; return to a tagged release then.
+      - uses: shivammathur/setup-php@292f25acb388a711c0c758f382e5c3109a391dd7 # main # zizmor: ignore[stale-action-refs,ref-version-mismatch]
         with:
           php-version: '8.4'
           tools: composer
@@ -36,7 +37,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # 2.40.0
+      - uses: shivammathur/setup-php@292f25acb388a711c0c758f382e5c3109a391dd7 # main # zizmor: ignore[stale-action-refs,ref-version-mismatch]
         with:
           php-version: '8.4'
           tools: phpize, php-config
@@ -60,7 +61,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        php: ['7.4', '8.0', '8.1', '8.2', '8.3', '8.4', '8.5']
+        php: ['7.4', '8.0', '8.1', '8.2', '8.3', '8.4', '8.5', '8.6']
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -68,7 +69,7 @@ jobs:
           persist-credentials: false
 
       - name: Setup PHP
-        uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # 2.40.0
+        uses: shivammathur/setup-php@292f25acb388a711c0c758f382e5c3109a391dd7 # main # zizmor: ignore[stale-action-refs,ref-version-mismatch]
         with:
           php-version: ${{ matrix.php }}
           tools: phpize, php-config
@@ -129,57 +130,6 @@ jobs:
           export TEST_PHP_EXECUTABLE=/tmp/php-zts/bin/php
           export TEST_PHP_ARGS="-d extension=$(pwd)/modules/lchash.so"
           /tmp/php-zts/bin/php run-tests.php --show-diff -g FAIL,BORK,LEAK,XLEAK tests/
-
-  # setup-php still serves 8.6 from its nightly channel, so 8.6 NTS is
-  # built in release mode from the official php.net release tarball.
-  linux-src:
-    name: PHP ${{ matrix.php-src }} - Linux (php.net release)
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - php-src: '8.6.0'
-            php-src-sha256: 5f84beaa3d763aee1e4feed99bf54ec692c383b322e25626807b589238c3a087
-
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Install build deps
-        run: sudo apt-get update -qq && sudo apt-get install -y re2c bison autoconf
-
-      - name: Build PHP from source
-        env:
-          PHP_SRC: ${{ matrix.php-src }}
-          PHP_SRC_SHA256: ${{ matrix.php-src-sha256 }}
-        run: |
-          set -euo pipefail
-          tarball="$RUNNER_TEMP/php-$PHP_SRC.tar.xz"
-          curl -fsSL --retry 3 -o "$tarball" "https://www.php.net/distributions/php-$PHP_SRC.tar.xz"
-          echo "$PHP_SRC_SHA256  $tarball" | sha256sum -c -
-          mkdir /tmp/php-src
-          tar -xJf "$tarball" -C /tmp/php-src --strip-components=1
-          cd /tmp/php-src
-          ./configure --disable-debug --disable-zts --disable-all --enable-cli --prefix=/tmp/php-nts
-          make -j$(nproc)
-          make install
-
-      - name: Build extension
-        run: |
-          export PATH="/tmp/php-nts/bin:$PATH"
-          phpize
-          ./configure --enable-lchash --with-php-config=/tmp/php-nts/bin/php-config
-          make -j$(nproc)
-
-      - name: Run test suite
-        env:
-          NO_INTERACTION: 1
-        run: |
-          export TEST_PHP_EXECUTABLE=/tmp/php-nts/bin/php
-          export TEST_PHP_ARGS="-d extension=$(pwd)/modules/lchash.so"
-          /tmp/php-nts/bin/php run-tests.php --show-diff -g FAIL,BORK,LEAK,XLEAK tests/
 
   # Windows builds need the PHP SDK and a matching MSVC toolset, which
   # php-windows-builder sets up along with the build and a .dll smoke load.
