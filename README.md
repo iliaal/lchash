@@ -11,7 +11,7 @@ four procedural functions for a single per-request table (the original
 2005 API), and an `LcHash` class with `$obj[$key]` access for any number
 of per-instance tables.
 
-Supports PHP 7.4 through 8.5, NTS and ZTS, on glibc Linux, musl, macOS,
+Supports PHP 7.4 through 8.6, NTS and ZTS, on glibc Linux, musl, macOS,
 *BSD, and Windows.
 
 lchash first shipped on PECL in 2005. The 1.0.0 release rewrites it for
@@ -88,7 +88,7 @@ make install
 ### Windows
 
 Every [release](https://github.com/iliaal/lchash/releases) has
-pre-built `.dll` zips for PHP 8.3 / 8.4 / 8.5 × x64 / x86 × NTS / TS.
+pre-built `.dll` zips for PHP 8.3 / 8.4 / 8.5 / 8.6 × x64 / x86 × NTS / TS.
 Download the matching zip, extract `php_lchash.dll` into your `ext/`
 directory, and add `extension=lchash` to `php.ini`.
 

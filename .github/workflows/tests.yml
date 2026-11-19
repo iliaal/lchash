@@ -130,17 +130,17 @@ jobs:
           export TEST_PHP_ARGS="-d extension=$(pwd)/modules/lchash.so"
           /tmp/php-zts/bin/php run-tests.php --show-diff -g FAIL,BORK,LEAK,XLEAK tests/
 
-  # setup-php has no PHP-8.6 branch build, so 8.6 NTS is built from
-  # php-src's PHP-8.6 branch in release mode.
+  # setup-php still serves 8.6 from its nightly channel, so 8.6 NTS is
+  # built in release mode from the official php.net release tarball.
   linux-src:
-    name: PHP ${{ matrix.php }} - Linux (PHP-${{ matrix.php }} branch)
+    name: PHP ${{ matrix.php-src }} - Linux (php.net release)
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        php: ['8.6']
-    env:
-      PHP_VERSION: ${{ matrix.php }}
+        include:
+          - php-src: '8.6.0'
+            php-src-sha256: 5f84beaa3d763aee1e4feed99bf54ec692c383b322e25626807b589238c3a087
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -151,10 +151,17 @@ jobs:
         run: sudo apt-get update -qq && sudo apt-get install -y re2c bison autoconf
 
       - name: Build PHP from source
+        env:
+          PHP_SRC: ${{ matrix.php-src }}
+          PHP_SRC_SHA256: ${{ matrix.php-src-sha256 }}
         run: |
-          git clone --depth=1 --branch="PHP-${PHP_VERSION}" https://github.com/php/php-src.git /tmp/php-src
+          set -euo pipefail
+          tarball="$RUNNER_TEMP/php-$PHP_SRC.tar.xz"
+          curl -fsSL --retry 3 -o "$tarball" "https://www.php.net/distributions/php-$PHP_SRC.tar.xz"
+          echo "$PHP_SRC_SHA256  $tarball" | sha256sum -c -
+          mkdir /tmp/php-src
+          tar -xJf "$tarball" -C /tmp/php-src --strip-components=1
           cd /tmp/php-src
-          ./buildconf --force
           ./configure --disable-debug --disable-zts --disable-all --enable-cli --prefix=/tmp/php-nts
           make -j$(nproc)
           make install
@@ -188,7 +195,7 @@ jobs:
       - id: matrix
         uses: php/php-windows-builder/extension-matrix@29352c0ef9e8ce65264ea9e287881a6f7758a953 # 1.9.0
         with:
-          php-version-list: '8.3,8.4,8.5'
+          php-version-list: '8.3,8.4,8.5,8.6'
 
   windows:
     name: Windows ${{ matrix.php-version }} ${{ matrix.ts }} ${{ matrix.arch }}

@@ -2,7 +2,7 @@ name: Release Windows binaries
 
 # Runs when a GitHub Release is published. Builds every PHP version x arch x
 # thread-safety variant on Windows and uploads each .dll with the PIE naming
-# convention (php_lchash-<version>-<php_x.y>-<ts|nts>-vs17-<arch>.zip).
+# convention (php_lchash-<version>-<php_x.y>-<ts|nts>-<vs16|vs17|vs18>-<arch>.zip).
 #
 # Tests are off here because tests.yml already runs the same matrix on main.
 
@@ -31,7 +31,7 @@ jobs:
       - id: matrix
         uses: php/php-windows-builder/extension-matrix@29352c0ef9e8ce65264ea9e287881a6f7758a953 # 1.9.0
         with:
-          php-version-list: '8.3, 8.4, 8.5'
+          php-version-list: '8.3, 8.4, 8.5, 8.6'
 
   build:
     name: Build ${{ matrix.php-version }} ${{ matrix.ts }} ${{ matrix.arch }}
