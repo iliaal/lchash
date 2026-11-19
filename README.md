@@ -128,9 +128,9 @@ Procedural API:
   `lchash_destroy()` in between emits a warning and returns `false`.
   If you don't call `lchash_destroy()`, the table is freed at request
   shutdown. In FrankenPHP worker mode, that is the end of each HTTP
-  request, so a table created before `frankenphp_handle_request()` does
-  not survive into the first request. Use an `LcHash` object to keep a
-  table across worker requests.
+  request, so a table created before `frankenphp_handle_request()`, or
+  by code that runs between two requests, does not survive into the next
+  request. Use an `LcHash` object to keep a table across worker requests.
 - First writer wins. Inserting an existing key returns `true` and keeps
   the old value, like glibc `hsearch(ENTER)`.
 - Errors emit `E_WARNING` and return `false`, for compatibility with

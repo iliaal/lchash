@@ -348,12 +348,25 @@ PHP_METHOD(LcHash, __construct)
  * Module lifecycle
  * ------------------------------------------------------------------------ */
 
+static int (*lchash_orig_sapi_activate)(void) = NULL;
 static int (*lchash_orig_sapi_deactivate)(void) = NULL;
 
 /* FrankenPHP worker mode runs module RSHUTDOWN only when the worker script
- * exits, but calls sapi_deactivate() after every HTTP request. Freeing the
- * table here keeps it scoped to one HTTP request there. In other SAPIs this
- * runs after RSHUTDOWN, when the table is already gone. */
+ * exits, but calls sapi_deactivate() after every HTTP request and
+ * sapi_activate() before the next one. PHP code still runs in between:
+ * destructors of the handler's return value and arguments, and the worker
+ * loop body. Freeing the table at both points keeps it scoped to one HTTP
+ * request. In other SAPIs these run outside RINIT..RSHUTDOWN, when there is
+ * no table. */
+static int lchash_sapi_activate(void)
+{
+#if defined(COMPILE_DL_LCHASH) && defined(ZTS)
+	ZEND_TSRMLS_CACHE_UPDATE();
+#endif
+	lchash_table_destroy();
+	return lchash_orig_sapi_activate ? lchash_orig_sapi_activate() : SUCCESS;
+}
+
 static int lchash_sapi_deactivate(void)
 {
 #if defined(COMPILE_DL_LCHASH) && defined(ZTS)
@@ -389,6 +402,8 @@ PHP_MINIT_FUNCTION(lchash)
 	/* A module loaded with dl() is unloaded at request end, which would
 	 * leave a later wrapper chained to unmapped code. */
 	if (type == MODULE_PERSISTENT) {
+		lchash_orig_sapi_activate = sapi_module.activate;
+		sapi_module.activate = lchash_sapi_activate;
 		lchash_orig_sapi_deactivate = sapi_module.deactivate;
 		sapi_module.deactivate = lchash_sapi_deactivate;
 	}
@@ -398,6 +413,9 @@ PHP_MINIT_FUNCTION(lchash)
 
 PHP_MSHUTDOWN_FUNCTION(lchash)
 {
+	if (sapi_module.activate == lchash_sapi_activate) {
+		sapi_module.activate = lchash_orig_sapi_activate;
+	}
 	if (sapi_module.deactivate == lchash_sapi_deactivate) {
 		sapi_module.deactivate = lchash_orig_sapi_deactivate;
 	}

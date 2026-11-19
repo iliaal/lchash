@@ -2,7 +2,12 @@
  * thread stays open while sapi_deactivate()/sapi_activate() run between
  * HTTP requests, the way frankenphp_worker_request_shutdown() and
  * frankenphp_worker_request_startup() do. Each HTTP request creates the
- * procedural table without destroying it and must get a fresh one. */
+ * procedural table without destroying it and must get a fresh one.
+ *
+ * FrankenPHP releases the handler's return value after sapi_deactivate(),
+ * and the worker loop body runs before the next sapi_activate(), so PHP code
+ * can recreate the table between requests. Each HTTP request leaves an
+ * object whose destructor does that, released after sapi_deactivate(). */
 
 #include <sapi/embed/php_embed.h>
 #include <main/php_output.h>
@@ -50,7 +55,14 @@ static int handle_http_request(int tid, int run, int req)
 		"(function () {"
 		" $c = @lchash_create(16);"
 		" lchash_insert('u', 't%dr%dq%d');"
-		" return $c === true && lchash_find('u') === 't%dr%dq%d';"
+		" $GLOBALS['late'] = new class {"
+		"  public function __destruct() {"
+		"   if (@lchash_create(4)) { lchash_insert('late', 'stale'); }"
+		"  }"
+		" };"
+		" return $c === true"
+		"  && lchash_find('u') === 't%dr%dq%d'"
+		"  && lchash_find('late') === false;"
 		" })()",
 		tid, run, req, tid, run, req);
 	return eval_true(code);
@@ -61,6 +73,7 @@ static void between_http_requests(void)
 	zend_try { php_output_end_all(); } zend_end_try();
 	zend_try { php_output_deactivate(); } zend_end_try();
 	zend_try { sapi_deactivate(); } zend_end_try();
+	(void) eval_true("(function () { unset($GLOBALS['late']); return true; })()");
 	php_output_activate();
 	sapi_activate();
 }
