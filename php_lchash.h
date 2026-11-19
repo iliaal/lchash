@@ -35,6 +35,7 @@ extern zend_module_entry lchash_module_entry;
 #endif
 
 PHP_MINIT_FUNCTION(lchash);
+PHP_MSHUTDOWN_FUNCTION(lchash);
 PHP_RINIT_FUNCTION(lchash);
 PHP_RSHUTDOWN_FUNCTION(lchash);
 PHP_MINFO_FUNCTION(lchash);

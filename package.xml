@@ -73,6 +73,8 @@ OO APIs (NUL bytes preserved, length-aware comparison).
    <file role="test" name="tests/053-fill-to-capacity.phpt"/>
    <file role="test" name="tests/060-no-explicit-destroy.phpt"/>
    <file role="test" name="tests/070-oo-binary-safe-key.phpt"/>
+   <file role="test" name="tests/embed/run.sh"/>
+   <file role="test" name="tests/embed/worker-requests.c"/>
   </dir>
  </contents>
  <dependencies>
