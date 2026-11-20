@@ -6,6 +6,8 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-11-20
+
 ### Added
 - Windows binaries for PHP 8.6 (x64/x86, NTS/TS) on every release.
 
@@ -93,6 +95,7 @@ uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Original PECL release. Error handling fixes, binary-safe data storage.
 PHP 4 / PHP 5 only.
 
-[Unreleased]: https://github.com/iliaal/lchash/compare/1.0.1...HEAD
+[Unreleased]: https://github.com/iliaal/lchash/compare/1.1.0...HEAD
+[1.1.0]: https://github.com/iliaal/lchash/releases/tag/1.1.0
 [1.0.1]: https://github.com/iliaal/lchash/releases/tag/1.0.1
 [1.0.0]: https://github.com/iliaal/lchash/releases/tag/1.0.0
